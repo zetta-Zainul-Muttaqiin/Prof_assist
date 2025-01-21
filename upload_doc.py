@@ -1,112 +1,123 @@
-# This is a sample Python script.
-
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-from langchain.document_loaders import (
-        PyPDFLoader,
-        UnstructuredMarkdownLoader,
-        PDFMinerLoader,
-        PDFMinerPDFasHTMLLoader,
-    )
-from langchain.text_splitter import (
-        CharacterTextSplitter,
-        MarkdownHeaderTextSplitter,
-        RecursiveCharacterTextSplitter,
-    )
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import AstraDB
-from langchain.callbacks import get_openai_callback
+from langchain_astradb.vectorstores import AstraDBVectorStore
+from astrapy.db import AstraDB
+import datetime
+from langchain.callbacks.manager import get_openai_callback
 from langchain.docstore.document import Document
+from werkzeug.local import Local
 import openai
 from bs4 import BeautifulSoup
 import re
-import pandas as pd
-import numpy as np
 import requests
-import markdown
 from dotenv import load_dotenv
 import os
 import logging
 import tiktoken
-import time
+import fitz
+
+from setup import logger
 
 load_dotenv()
+# *************** to save the result of token count for semantic chunking in non-shared global variable 
+upload_doc = Local()
+def set_semantic_chunker_token(token):
+    upload_doc.semantic_chunker_token = token
+        
+def get_semantic_chunker_token():
+    return getattr(upload_doc, "semantic_chunker_token", None)
+# *************** end of to save the result of token count for semantic chunking in non-shared global variable 
+
+#*************** retrieve keys from env file and set it to env variable
 openai_api_key = os.getenv("OPENAI_API_KEY")
 os.environ['OPENAI_API_KEY'] =  openai_api_key
 astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
 astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
 astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
+
+astradb_token_key_upload_doc = os.getenv("ASTRADB_TOKEN_KEY_UPLOAD_DOC")
+astradb_api_endpoint_upload_doc = os.getenv("ASTRADB_API_ENDPOINT_UPLOAD_DOC")
+astradb_collection_name_upload_doc = os.getenv("ASTRADB_COLLECTION_NAME_UPLOAD_DOC")
+
 url_webhook = os.getenv("URL_WEBHOOK")
-url_error_webhook = os.getenv("URL_ERROR_WEBHOOK")
+url_error_webhook = os.getenv("URL_WEBHOOK")
+encoding = tiktoken.encoding_for_model("text-embedding-ada-002")
+
+#*************** end of retrieve keys from env file and set it to env variable
+
+def tokens_semantic_chunker(data):
+    print("Counting tokens for semantic chunking ...")
+    # split document based on '.', '?', or '!'
+    single_sentences_list = re.split(r'(?<=[.?!])\s+', data)
+    sentences = [{'sentence':x, 'index':i} for i, x in enumerate(single_sentences_list)]
+    buffer_size = 1
+    #*************** combining sentences in triplet
+    for sentence in range(len(sentences)):
+        combined_sentence = ''
+        for index in range(sentence - buffer_size, sentence):
+            if index >= 0:
+                combined_sentence += sentences[index]['sentence'] + ''
+        combined_sentence += sentences[sentence]['sentence']
+        for index in range(sentence + 1, sentence + 1 + buffer_size):
+            if index < len(sentences):
+                combined_sentence += ' ' + sentences[index]['sentence']
+        sentences[sentence]['combined_sentence'] = combined_sentence
+    #*************** end of combining sentences in triplet
+    token_semantic_chunker = 0
+    for index in sentences:
+        token_semantic_chunker += tokens_embbeding(index['combined_sentence'])
+    print(f"Done counting tokens for semantic chunking. The amount of tokens: {token_semantic_chunker}")
+    return(token_semantic_chunker)
+
 
 def tokens_embbeding(string: str) -> int:
     """Returns the number of tokens in a text string."""
-    encoding = tiktoken.get_encoding("cl100k_base")
-    encoding = tiktoken.encoding_for_model("text-embedding-ada-002")
     num_tokens = len(encoding.encode(string))
     return num_tokens
 
+#*************** function to load PDF from URL 
 def load_doc(pdf_path):
     print("Load pdf...")
-    loader = PDFMinerPDFasHTMLLoader(pdf_path)
-    data = loader.load()[0]
+    req = requests.get(pdf_path) 
+    pdf = fitz.open(stream = req.content, filetype="pdf")
     print("Loader is done!...")
-    return data
+    return pdf
 
-def parsing_pdf_html(pages):
-    print("Parsing process...")
-    soup = BeautifulSoup(pages.page_content, "html.parser")
-    content = soup.find_all("div")
+#*************** function to get tag header HTML for each page
+def parsing_pdf_html(pdf):
+    print("Parsing pdf...")
+    join_page = ''
+    #*************** parsing each page in pdf to HTML tag
+    for page in pdf:
+        page_html = page.get_textpage().extractXHTML() 
+        search_html = BeautifulSoup(page_html, "html.parser")
 
-    cur_fs = None
-    cur_text = ""
-    snippets = []  # first collect all snippets that have the same font size
-    for c in content:
-        sp = c.find("span")
-        if not sp:
-            continue
-        st = sp.get("style")
-        if not st:
-            continue
-        fs = re.findall("font-size:(\d+)px", st)
-        if not fs:
-            continue
-        fs = int(fs[0])
-        if not cur_fs:
-            cur_fs = fs
-        if fs == cur_fs:
-            cur_text += c.text
-        else:
-            snippets.append((cur_text, cur_fs))
-            cur_fs = fs
-            cur_text = c.text
-    snippets.append((cur_text, cur_fs))
-    print("parsing is done!...")
-    return snippets
+        #*************** find all header tag <h> inside div tag
+        for line in search_html.div:
+            if line.name == "h1" and not line.find("i"):
+                join_page += f"{line}" + " "
 
-def to_markdown(snippet):
-    print("Converting to Markdown...")
-    df = pd.DataFrame(snippet, columns=["text", "font_size"])
-    # set header condition
-    size1 = df["font_size"] >= 30
-    size2 = (df["font_size"] < 30) & (df["font_size"] >= 18)
-    size3 = (df["font_size"] < 17) & (df["font_size"] >= 14)
-    size4 = (df["font_size"] < 14) & (df["font_size"] >= 10)
+            elif line.name == "h2" and not line.find("i"):
+                join_page += f"{line}" + " "
 
-    size_is = [size1, size2, size3, size4]
-    mark_is = ["#", "##", "###", "####"]
+            elif line.name == "h3" and not line.find("i"):
+                join_page += f"{line}" + " "
 
-    # set header and join text and header
-    df["header"] = np.select(size_is, mark_is, default="")
-    df["markdown"] = df["header"] + " " + df["text"]
-    # one string
-    mark = "".join(df["markdown"].tolist())
-    print("Markdown is ready...")
-    return mark
+            elif line.name == "h4" and not line.find("i"):
+                join_page += f"{line}" + " "
+            
+            else:
+                join_page += f"{line.text}" + " "
+        #*************** end parsing each page in pdf to HTML tag
+                
+    join_page = join_page.strip()
+    print("Parsing is done!...")
+    return join_page
+#*************** end of get tag header HTML for each page
 
-
-def remove_break_add_whitespace(mark):
+#*************** function to add \n\n breakspace
+def remove_break_add_whitespace(text):
     print("Retaining whitespace...")
     pattern = r"(\n)([a-z])"
     pattern2 = r"\n"
@@ -114,108 +125,91 @@ def remove_break_add_whitespace(mark):
     replacement = r" \2"
     replacement2 = r"\n\n"
 
-    replace_break = re.sub(pattern, replacement, mark)
+    replace_break = re.sub(pattern, replacement, text)
     replace_break = re.sub(pattern2, replacement2, replace_break)
     print("WHite space is retain...")
     return replace_break
+#*************** end of function to add \n\n breakspace
 
-
-def text_to_markdown_head(string, filename):
-    md = markdown.markdown(string)
-    with open("/content/" + filename, "w", encoding="utf-8") as f:
-        f.write(md)
-
-
+#*************** split document based on semantic meaning of the document with breakpoint threshold 75 percentile
 def create_document_by_splitting(data):
-    print("Chungking Process...")
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=250,
-        chunk_overlap=25,
-        length_function=len,
-        is_separator_regex=False,
-    )
+  tokens_for_semantic_chunker = tokens_semantic_chunker(data)
+  set_semantic_chunker_token(tokens_for_semantic_chunker)
+  print("Chunking Process...")
+  with get_openai_callback() as cb:
+    text_splitter = SemanticChunker(
+        OpenAIEmbeddings(
+            model='text-embedding-3-large'
+        ), 
+        breakpoint_threshold_type="percentile", 
+        breakpoint_threshold_amount=75
+        )
     docs = text_splitter.create_documents([data])
-    split = text_splitter.split_documents(docs)
-    print("Chungking is done...")
-    return docs
+    print(f"Chunking is done... {len(docs)}")
+    print(cb)
+  return docs
+#*************** end of split document based on semantic meaning of the document with breakpoint threshold 75 percentile
 
-
+#**************** function to retrieve header based on tag '<h>' and save it to metadata header
 def extract_headers(document):
     print("extracting header...")
-    docs = []
-    h1 = None
-    h2 = None
-    h3 = None
-    h4 = None
+    
+    h1 = None # first header 1 is null
+    h2 = None # first header 2 is null
+    h3 = None # first header 3 is null
+    h4 = None # first header 4 is null
+    docs = [] # final chunks will append to this array
+    clean = re.compile('<.*?>') # for clean all type of HTML
 
-    for doc in document:
-        page_content = doc.page_content
-        lines = page_content.split("\n\n")
-        temp_doc = Document(page_content=doc.page_content)
+    #**************** set metadata header from each chunks based on tag <h>
+    for chunk in document:
+        clean_content = re.sub(clean, '', chunk.page_content)
+        temp_doc = Document(page_content=clean_content)
 
-        for line in lines:
-            if line.startswith("#"):
-                header_level = line.count("#")
-                header_text = line.lstrip("#").strip()
 
-                if header_level == 1:
-                    h1 = header_text
+        search_tag = BeautifulSoup(chunk.page_content, "html.parser")
+        #**************** check each start of sentences with <h> will set as header based on the header level
+        for line in search_tag:
+            header =  line.text
+            if (len(header) > 1) & (re.match(r'^\W' , header) is None):
+                if line.name == "h1":
+                    h1 = header
                     h2 = None
                     h3 = None
                     h4 = None
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H1')
-                elif header_level == 2:
-                    h2 = header_text
+                elif line.name == "h2":
+                    h2 = header
                     h3 = None
                     h4 = None
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H2')
-                elif header_level == 3:
-                    h3 = header_text
+                elif line.name == "h3":
+                    h3 = header
                     h4 = None
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H3')
-                elif header_level == 4:
-                    h4 = header_text
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H4')
-            else:
-                temp_doc.metadata = {
+                elif line.name == "h4":
+                    h4 = header
+        #**************** end of check each start of sentences with <h> will set as header based on the header level 
+            #*************** add metadata header to chunk
+            temp_doc.metadata = {
                     "header1": h1,
                     "header2": h2,
                     "header3": h3,
-                    "header4": h4,
-                }
+                    "header4": h4
+                    }
+        #**************** end of check sentences start with tag <h>
         docs.append(temp_doc)
+    #*************** end of set metadata header based on tag <h>
     print("Header is ready...")
     return docs
+#**************** end of function to retrieve header based on tag <h> and save it to metadata header
 
-
+#*************** function to call webhook to BE once document processing is succcess
 def callWebhook(url, course, course_document_id, doc_tokens):
-    logging.basicConfig(level=logging.INFO,  # Set the logging level
-                        format='%(asctime)s [%(levelname)s] - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
+
+    logging.basicConfig(
+        filename='error.log', # Set a file for save logger output 
+        level=logging.INFO, # Set the logging level
+        format='%(asctime)s [%(levelname)s] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
     logger = logging.getLogger(__name__)
 
@@ -226,10 +220,30 @@ def callWebhook(url, course, course_document_id, doc_tokens):
     response = requests.post(url, json=payload)
     logger.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
 
+    #*************** Save webhook call record to AstraDB 
+    status = 'Success Uploading'
+    time = datetime.datetime.now()
+    current_time_serializable = time.isoformat()
+    payload['status'] = status
+    payload['time'] = current_time_serializable
+    db = AstraDB(
+        token=astradb_token_key,
+        api_endpoint=astradb_api_endpoint
+    )
+    collection = db.collection(collection_name=astradb_collection_name_upload_doc)
+    collection.insert_one(payload)
+    #*************** end of save webhook call record to AstraDB 
+#*************** end of function to call webhook to BE once document processing is done
+
+#*************** function to call webhook to BE once document processing hits rate limit error  
 def callErrorWebhook(url_error, course, course_document_id, doc_tokens, error):
-    logging.basicConfig(level=logging.INFO,  # Set the logging level
-                        format='%(asctime)s [%(levelname)s] - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
+
+    logging.basicConfig(
+        filename='error.log', # Set a file for save logger output 
+        level=logging.INFO, # Set the logging level
+        format='%(asctime)s [%(levelname)s] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
     logger = logging.getLogger(__name__)
 
@@ -240,375 +254,178 @@ def callErrorWebhook(url_error, course, course_document_id, doc_tokens, error):
     response = requests.post(url_error, json=payload)
     logger.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens, ' || Error Status: ', error)
 
+    #*************** Save webhook call record to AstraDB 
+    status = 'Failed Uploading'
+    time = datetime.datetime.now()
+    current_time_serializable = time.isoformat()
+    payload['status'] = status
+    payload['time'] = current_time_serializable
+    db = AstraDB(
+        token=astradb_token_key,
+        api_endpoint=astradb_api_endpoint
+    )
+        
+    collection = db.collection(collection_name=astradb_collection_name_upload_doc)
+    collection.insert_one(payload)
+    #*************** end of save webhook call record to AstraDB 
+#*************** end of function to call webhook to BE once document processing hits rate limit error 
+
+#*************** main function to be called for processing document
 def callRequest(URL, course_id, file_name, course_document_id):
-
-    logging.basicConfig(level=logging.INFO,  # Set the logging level
-                        format='%(asctime)s [%(levelname)s] - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
-
+    logging.basicConfig(
+        filename='error.log', # Set a file for save logger output 
+        level=logging.INFO, # Set the logging level
+        format='%(asctime)s [%(levelname)s] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
     logger = logging.getLogger(__name__)
 
     pdf_page = load_doc(URL)
     if(pdf_page):
         logger.info('Document downloaded... Course ID: ', course_id, ' || Document ID: ', course_document_id)
-    snippets = parsing_pdf_html(pdf_page)
-    mark = to_markdown(
-            snippets
-        )  # << use the output to chunk splitter by header markdown
-    mark_white = remove_break_add_whitespace(mark)
-    doc = create_document_by_splitting(mark_white)
 
+    pdf_page_parsed = parsing_pdf_html(pdf_page)
+    removed_break = remove_break_add_whitespace(pdf_page_parsed)
+    doc = create_document_by_splitting(removed_break)
     chunks = extract_headers(doc)
     doc_tokens = 0
     print("insert metedata information")
+    #*************** add metadata course ID, document name, and document ID to chunks
+    new_chunks = []
     for doc in chunks:
-        doc.metadata["source"] = f"{course_id}"
-        doc.metadata["document_name"] = f"{file_name}"
-        doc.metadata["document_id"] = f"{course_document_id}"
-        x = tokens_embbeding(doc.page_content)
-        doc.metadata["tokens_embbed"] = x
-        doc_tokens += x
-    print(f"chunks: {len(chunks)}")
-    # for i, _ in enumerate(chunks):
-    #     print(f"chunk #{i}, size: {chunks[i]}")
-    #     print(" - " * 100)
-    print(f"token usage : {doc_tokens}")
-    # Commented to remove validation for maximum of 150.000 tokens.
-    # if doc_tokens < 150000:
-    #     print("Embedding Process")
-    #     Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens)
-    #     print("Embeddings done")
-    # else:
-    #     print("PDF is too large")
-    #     error = "Tokens too large for LLM model OpenAI"
-    #     callErrorWebhook(url_error_webhook, course_id, course_document_id, doc_tokens, error)
-    print("Embedding Process")
-    Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens)
-    print("Embeddings done")
+        #*************** Check if doc.page_content character count is more than 7000. If yes, resplit the chunk
+        if len(doc.page_content) > 7000:
+            resplit = resplit_chunk(doc)
+            for resplit_doc in resplit:
+                resplit_doc.metadata['header1'] = doc.metadata['header1']
+                resplit_doc.metadata['header2'] = doc.metadata['header2']
+                resplit_doc.metadata['header3'] = doc.metadata['header3']
+                resplit_doc.metadata['header4'] = doc.metadata['header4']
+                resplit_doc.metadata["source"] = f"{course_id}"
+                resplit_doc.metadata["document_name"] = f"{file_name}"
+                resplit_doc.metadata["document_id"] = f"{course_document_id}"
+                x = tokens_embbeding(doc.page_content)
+                resplit_doc.metadata["tokens_embbed"] = x
+                doc_tokens += x
+            new_chunks.extend(resplit)
+        #*************** end of Check if doc.page_content character count is more than 7000. If yes, resplit the chunk
+        else:
+            doc.metadata["source"] = f"{course_id}"
+            doc.metadata["document_name"] = f"{file_name}"
+            doc.metadata["document_id"] = f"{course_document_id}"
+            x = tokens_embbeding(doc.page_content)
+            doc.metadata["tokens_embbed"] = x
+            doc_tokens += x
+            new_chunks.append(doc)
 
+    chunks = new_chunks
+    #*************** end of add metadata course ID, document name, and document ID to chunks
+    print(f"Token Usage for uploading: {doc_tokens}")
+    doc_tokens += get_semantic_chunker_token()
+    print(f"Token Usage for uploading + semantic chunking: {doc_tokens}")
+    print(f"chunks: {len(chunks)}")
+    print(f"token usage : {doc_tokens}")
+    if doc_tokens < 1000000:
+        print("Embedding Process")
+        Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens)
+        print("Embeddings done")
+    else:
+        error = "PDF Too Large"
+        callErrorWebhook(url_error_webhook, course_id, course_document_id, doc_tokens, error)
+#*************** end of main function to be called for processing document
+
+#*************** function to run the chunk embeddings and pushing to vector DB
 def Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens):
+
     with get_openai_callback() as cb:
-        embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", max_retries=3, retry_min_seconds=30,
-                                      retry_max_seconds=60, show_progress_bar=True)
-        vstore = AstraDB(
+        #*************** if success, call webhook success
+        try:
+           #*************** set embedding and vector store
+            embeddings = OpenAIEmbeddings(model="text-embedding-3-large", max_retries=3, retry_min_seconds=30,
+                                          retry_max_seconds=60, show_progress_bar=True)
+
+            vstore = AstraDBVectorStore(
             embedding=embeddings,
             collection_name=astradb_collection_name,
             api_endpoint=astradb_api_endpoint,
             token=astradb_token_key,
             )
-        try:
+           #*************** end of set embedding and vector store
             vstore.add_documents(chunks)
             print(cb)
             print("Calling Webhook for success uploading")
             return callWebhook(url_webhook, course_id, course_document_id, doc_tokens)
+        #*************** end of if success, call webhook success
+
+        #*************** if hits ratelimit error, call error webhook
         except openai.RateLimitError as er:
             print("Fail rate limit error. Call error webhook")
             callErrorWebhook(url_error_webhook, course_id, course_document_id, doc_tokens, er.message)
+        #*************** end of if hits ratelimit error, call error webhook
+#*************** end of function to run the chunk embeddings and pushing to vector DB
 
-def delete(course_id):
+#*************** function to resplit oversize chunk
+def resplit_chunk(chunk):
+    threshold_amount = 70  # Starting threshold amount
+    max_iterations = 2
+    current_iteration = 0
+    is_semantic_successful = False
+
+    while current_iteration < max_iterations:
+        print("ENTERING SEMANTIC RESPLIT")
+        docs = None
+        print('RESPLIT CHUNK: ', chunk)
+        tokens_for_semantic_chunker = tokens_semantic_chunker(chunk.page_content)
+        set_semantic_chunker_token(tokens_for_semantic_chunker + get_semantic_chunker_token())
+        text_splitter = SemanticChunker(
+            OpenAIEmbeddings(
+                model='text-embedding-3-large'
+            ), breakpoint_threshold_type="percentile", breakpoint_threshold_amount=threshold_amount
+        )
+        docs = text_splitter.create_documents(texts=[chunk.page_content])
+        all_docs_below_threshold = all(len(doc.page_content) <= 7000 for doc in docs)
+        if all_docs_below_threshold:
+            is_semantic_successful = True
+            break  # Exit the loop if all documents satisfy the condition
+
+        # Decrease the threshold amount by 5 for the next iteration
+        threshold_amount -= 5
+        current_iteration += 1
+
+    if(is_semantic_successful is False):
+        print("ENTERING RECURSIVE RESPLIT")
+        docs = None
+        print('RESPLIT CHUNK: ', chunk)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=512,
+            chunk_overlap=50
+        )
+        docs = text_splitter.create_documents(texts=[chunk.page_content])
+    print('RESULT RESPLIT: ', docs)
+    return docs
+#*************** end of function to resplit oversize chunk
+
+#*************** function to delete based on document ID
+def delete(document_id):
     from astrapy.db import AstraDB, AstraDBCollection
+
     astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
     astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
     astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
-
+    
     astra_db = AstraDB(token=astradb_token_key,
                        api_endpoint=astradb_api_endpoint)
-    collection = AstraDBCollection(
-        collection_name=astradb_collection_name, astra_db=astra_db)
-
-    col_response = collection.delete_many(filter={"metadata.source": course_id})
+    collection = AstraDBCollection(collection_name=astradb_collection_name, astra_db=astra_db)
+    col_response = collection.delete_many(filter={"metadata.document_id": document_id})
     print(col_response)
+    #************** deleting is paginated per 20 data. Recursive if status is still 'moreData'
     if 'moreData' in col_response['status']:
         print("deleting again")
-        delete(course_id)
+        delete(document_id)
     else:
         print("delete is done!")
+    #************** end of deleting is paginated per 20 data. Recursive if status is still 'moreData'
+#*************** end of function to delete based on document ID
 
-
-# Press the green button in the gutter to run the script.
 if __name__ == "__main__":
     callRequest("https://www2.ed.gov/documents/ai-report/ai-report.pdf","65c46edc510f69a052a47119", "ai", "65c46f04510f69a052a47148")# This is a sample Python script.
-
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-from langchain.document_loaders import (
-        PyPDFLoader,
-        UnstructuredMarkdownLoader,
-        PDFMinerLoader,
-        PDFMinerPDFasHTMLLoader,
-    )
-from langchain.text_splitter import (
-        CharacterTextSplitter,
-        MarkdownHeaderTextSplitter,
-        RecursiveCharacterTextSplitter,
-    )
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import AstraDB
-from langchain.callbacks import get_openai_callback
-from langchain.docstore.document import Document
-import openai
-from bs4 import BeautifulSoup
-import re
-import pandas as pd
-import numpy as np
-import requests
-import markdown
-from dotenv import load_dotenv
-import os
-import logging
-import tiktoken
-import time
-
-load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-os.environ['OPENAI_API_KEY'] =  openai_api_key
-astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
-astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
-astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
-url_webhook = os.getenv("URL_WEBHOOK")
-url_error_webhook = os.getenv("URL_ERROR_WEBHOOK")
-
-def tokens_embbeding(string: str) -> int:
-    """Returns the number of tokens in a text string."""
-    encoding = tiktoken.get_encoding("cl100k_base")
-    encoding = tiktoken.encoding_for_model("text-embedding-ada-002")
-    num_tokens = len(encoding.encode(string))
-    return num_tokens
-
-def load_doc(pdf_path):
-    print("Load pdf...")
-    loader = PDFMinerPDFasHTMLLoader(pdf_path)
-    data = loader.load()[0]
-    print("Loader is done!...")
-    return data
-
-def parsing_pdf_html(pages):
-    print("Parsing process...")
-    soup = BeautifulSoup(pages.page_content, "html.parser")
-    content = soup.find_all("div")
-
-    cur_fs = None
-    cur_text = ""
-    snippets = []  # first collect all snippets that have the same font size
-    for c in content:
-        sp = c.find("span")
-        if not sp:
-            continue
-        st = sp.get("style")
-        if not st:
-            continue
-        fs = re.findall("font-size:(\d+)px", st)
-        if not fs:
-            continue
-        fs = int(fs[0])
-        if not cur_fs:
-            cur_fs = fs
-        if fs == cur_fs:
-            cur_text += c.text
-        else:
-            snippets.append((cur_text, cur_fs))
-            cur_fs = fs
-            cur_text = c.text
-    snippets.append((cur_text, cur_fs))
-    print("parsing is done!...")
-    return snippets
-
-def to_markdown(snippet):
-    print("Converting to Markdown...")
-    df = pd.DataFrame(snippet, columns=["text", "font_size"])
-    # set header condition
-    size1 = df["font_size"] >= 30
-    size2 = (df["font_size"] < 30) & (df["font_size"] >= 18)
-    size3 = (df["font_size"] < 17) & (df["font_size"] >= 14)
-    size4 = (df["font_size"] < 14) & (df["font_size"] >= 10)
-
-    size_is = [size1, size2, size3, size4]
-    mark_is = ["#", "##", "###", "####"]
-
-    # set header and join text and header
-    df["header"] = np.select(size_is, mark_is, default="")
-    df["markdown"] = df["header"] + " " + df["text"]
-    # one string
-    mark = "".join(df["markdown"].tolist())
-    print("Markdown is ready...")
-    return mark
-
-
-def remove_break_add_whitespace(mark):
-    print("Retaining whitespace...")
-    pattern = r"(\n)([a-z])"
-    pattern2 = r"\n"
-
-    replacement = r" \2"
-    replacement2 = r"\n\n"
-
-    replace_break = re.sub(pattern, replacement, mark)
-    replace_break = re.sub(pattern2, replacement2, replace_break)
-    print("WHite space is retain...")
-    return replace_break
-
-
-def text_to_markdown_head(string, filename):
-    md = markdown.markdown(string)
-    with open("/content/" + filename, "w", encoding="utf-8") as f:
-        f.write(md)
-
-
-def create_document_by_splitting(data):
-    print("Chungking Process...")
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=250,
-        chunk_overlap=25,
-        length_function=len,
-        is_separator_regex=False,
-    )
-    docs = text_splitter.create_documents([data])
-    split = text_splitter.split_documents(docs)
-    print("Chungking is done...")
-    return docs
-
-
-def extract_headers(document):
-    print("extracting header...")
-    docs = []
-    h1 = None
-    h2 = None
-    h3 = None
-    h4 = None
-
-    for doc in document:
-        page_content = doc.page_content
-        lines = page_content.split("\n\n")
-        temp_doc = Document(page_content=doc.page_content)
-
-        for line in lines:
-            if line.startswith("#"):
-                header_level = line.count("#")
-                header_text = line.lstrip("#").strip()
-
-                if header_level == 1:
-                    h1 = header_text
-                    h2 = None
-                    h3 = None
-                    h4 = None
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H1')
-                elif header_level == 2:
-                    h2 = header_text
-                    h3 = None
-                    h4 = None
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H2')
-                elif header_level == 3:
-                    h3 = header_text
-                    h4 = None
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H3')
-                elif header_level == 4:
-                    h4 = header_text
-                    temp_doc.metadata = {
-                        "header1": h1,
-                        "header2": h2,
-                        "header3": h3,
-                        "header4": h4,
-                    }
-                    # print('detect H4')
-            else:
-                temp_doc.metadata = {
-                    "header1": h1,
-                    "header2": h2,
-                    "header3": h3,
-                    "header4": h4,
-                }
-        docs.append(temp_doc)
-    print("Header is ready...")
-    return docs
-
-
-def callWebhook(url, course, course_document_id, doc_tokens):
-    logging.basicConfig(level=logging.INFO,  # Set the logging level
-                        format='%(asctime)s [%(levelname)s] - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
-
-    logger = logging.getLogger(__name__)
-
-    logger.info('Webhook called... Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
-
-    payload = {'course_id': course, 'document_id': course_document_id, 'tokens_embbed': doc_tokens}  # Replace with your JSON payload
-
-    response = requests.post(url, json=payload)
-    logger.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
-
-def callErrorWebhook(url_error, course, course_document_id, doc_tokens, error):
-    logging.basicConfig(level=logging.INFO,  # Set the logging level
-                        format='%(asctime)s [%(levelname)s] - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
-
-    logger = logging.getLogger(__name__)
-
-    logger.info('Webhook called... Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
-
-    payload = {'course_id': course, 'document_id': course_document_id, 'tokens_embbed': doc_tokens, 'Error': error}  # Replace with your JSON payload
-
-    response = requests.post(url_error, json=payload)
-    logger.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens, ' || Error Status: ', error)
-
-
-def Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens):
-    with get_openai_callback() as cb:
-        embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", max_retries=3, retry_min_seconds=30,
-                                      retry_max_seconds=60, show_progress_bar=True)
-        vstore = AstraDB(
-            embedding=embeddings,
-            collection_name=astradb_collection_name,
-            api_endpoint=astradb_api_endpoint,
-            token=astradb_token_key,
-            )
-        try:
-            vstore.add_documents(chunks)
-            print(cb)
-            print("Calling Webhook for success uploading")
-            return callWebhook(url_webhook, course_id, course_document_id, doc_tokens)
-        except openai.RateLimitError as er:
-            print("Fail rate limit error. Call error webhook")
-            callErrorWebhook(url_error_webhook, course_id, course_document_id, doc_tokens, er.message)
-
-def delete(course_id):
-    from astrapy.db import AstraDB, AstraDBCollection
-    astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
-    astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
-    astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
-
-    astra_db = AstraDB(token=astradb_token_key,
-                       api_endpoint=astradb_api_endpoint)
-    collection = AstraDBCollection(
-        collection_name=astradb_collection_name, astra_db=astra_db)
-
-    col_response = collection.delete_many(filter={"metadata.source": course_id})
-    print(col_response)
-    if 'moreData' in col_response['status']:
-        print("deleting again")
-        delete(course_id)
-    else:
-        print("delete is done!")
-
-
-# Press the green button in the gutter to run the script.
-if __name__ == "__main__":
-    callRequest("https://www2.ed.gov/documents/ai-report/ai-report.pdf","65c46edc510f69a052a47119", "ai", "65c46f04510f69a052a47148")
