@@ -1,6 +1,4 @@
-from langchain_astradb.vectorstores import AstraDBVectorStore
-from astrapy.db import AstraDB as AstraDBPy
-from langchain.embeddings.openai import OpenAIEmbeddings
+# *************** IMPORTS ***************
 from dotenv import load_dotenv
 import logging
 import os
@@ -12,35 +10,20 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-logger = logging.getLogger(__name__)
-logger.info("Init Global Variable")
+LOGGER = logging.getLogger(__name__)
+LOGGER.info("Init Global Variable")
 
 # ********* load .env content
-
-load_dotenv()
+load_dotenv(override=True)
 # ********* set token for openai and datastax
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+ASTRADB_TOKEN_KEY = os.getenv("ASTRADB_TOKEN_KEY")
+ASTRADB_API_ENDPOINT = os.getenv("ASTRADB_API_ENDPOINT")
+ASTRADB_COLLECTION_NAME = os.getenv("ASTRADB_COLLECTION_NAME")
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
-os.environ["OPENAI_API_KEY"] = openai_api_key
-astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
-astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
-astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
+GREETINGS_EN = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'hi, how is it going?', 'greetings!', 'how are you doing?', 'how do you do?', 'what`s up?']
+GREETINGS_FR = ['bonjour', 'salut', 'coucou', 'bonsoir', 'bonjour à tous', 'comment allez-vous ce matin ?', 'bonne journée', 'bonne soirée', 'bonne nuit', 'À bientôt', 'À plus tard', 'À tout à lheure', 'À demain', 'Ça va?', 'enchanté']
 
-vstore = AstraDBVectorStore(
-embedding=OpenAIEmbeddings(
-    max_retries=5, 
-    retry_min_seconds=20, 
-    retry_max_seconds=60,
-    model='text-embedding-3-large'
-    ),
-collection_name=astradb_collection_name,
-api_endpoint=astradb_api_endpoint,
-token=astradb_token_key,
-namespace="default_keyspace"
-)
 
-astra_db_get_topics = AstraDBPy(token=astradb_token_key,
-api_endpoint=astradb_api_endpoint)
-topics_collection = astra_db_get_topics.collection(collection_name=astradb_collection_name)
-
-logger.info("Connected to DataStax")
+LOGGER.info("Setup Done")
