@@ -61,8 +61,10 @@ def convert_chat_history(chat_history: list) -> list:
 
     # *************** Add messages to formatted history
     for chat in chat_history:
-        history_inputted.append(HumanMessage(content=chat.get('human')))
-        history_inputted.append(AIMessage(content=chat.get('ai')))
+        if chat['type'] == 'human':
+            history_inputted.append(HumanMessage(content=chat['content']))
+        elif chat['type'] == 'ai':
+            history_inputted.append(AIMessage(content=chat['content']))
     
     if history_inputted:
         LOGGER.info(f"Chat History is Converted to BaseMessages: {len(history_inputted)} messages")  
@@ -173,21 +175,27 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
     ragChain = generate_akadbot_chain()
     message = ''
     header_ref = ''
-    header_ref_array = []
 
     with get_openai_callback() as cb:
         start_time = time.time()
         if detect_greetings(question.lower()):
             # ********* invoke answer for greetings
-            ai_msg = LLMModels(temperature=1.0).invoke(question)
+            message = LLMModels(temperature=1.0, max_tokens=100).llm_cv.invoke(question)
             # ********* save as message response
-            message = ai_msg.content
+            if not isinstance(message, str):
+                message = message.content
+            
 
             end_time = time.time()
             elapsed_time = end_time - start_time
             print(f"TIME TO INVOKE: {elapsed_time} seconds")
             # ********* Add current question and answer into chat history, also header reference but null
-            chat_history.extend([HumanMessage(content=question), ai_msg])
+            chat_history.extend(
+                [
+                    {"type": "human", "content": question}, 
+                    {"type": "ai", "content": message, 'header_ref': ''}
+                ]
+            )
         else:
 
             history_input = convert_chat_history(chat_history)
@@ -233,14 +241,18 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
             # ********* add all header_reference and removing the duplicated reference
             unique_lines = set(header_ref.split('\n'))
             header_ref = '\n'.join(unique_lines)
-            header_ref_array.append(header_ref)
             # ********* end of add all header_reference and removing the duplicated reference
-            print('HEADER REF ARRAY: ', header_ref_array)
+            print('HEADER REF ARRAY: ', header_ref)
             print('')
             print('-' * 250)
             
             # ********* Add current question and answer into chat history, also header reference but null
-            chat_history.extend([HumanMessage(content=question), AIMessage(content=message)])
+            chat_history.extend(
+                [
+                    {"type": "human", "content": question}, 
+                    {"type": "ai", "content": message, 'header_ref': header_ref}
+                ]
+            )
 
                 # Chek if topic already exist and create summary as Topic
         print(f'history: {chat_history}')
@@ -252,7 +264,7 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
     tokens_out = cb.completion_tokens
     tokens_in = cb.prompt_tokens
 
-    return message, chat_history, topic, tokens_out, tokens_in, header_ref_array
+    return message, chat_history, topic, tokens_out, tokens_in
 
 def main():
     chat_history = []
