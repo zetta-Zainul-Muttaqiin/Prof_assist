@@ -1,24 +1,28 @@
-from langchain.vectorstores import AstraDB
-from langchain.embeddings.openai import OpenAIEmbeddings
-
-from langchain.memory import ConversationBufferMemory
+from langchain_core.prompts import PromptTemplate
 from langchain.schema import StrOutputParser
 from langchain.schema.runnable import RunnablePassthrough
-from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models.openai import ChatOpenAI
 from langchain.prompts import MessagesPlaceholder
 from langchain.prompts.chat import (
     ChatPromptTemplate
 )
-from langchain.callbacks import get_openai_callback
-from langchain.schema.messages import AIMessage, HumanMessage
+from langchain.callbacks.manager import get_openai_callback
 from dotenv import load_dotenv
+from operator import itemgetter
+from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_community.document_transformers import (
+    LongContextReorder,
+)
 import os
+import json
 import openai
 import requests
 import time
 import tiktoken
 import logging
 import re
+from setup import vstore, topics_collection
 
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -28,23 +32,21 @@ print(f'api: {openai_api_key}')
 astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
 astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
 astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
+url_webhook = os.getenv("URL_WEBHOOK_QUIZ_BUILDER")
 
+# *************** class for Multiple output field in JSON Parser
+class ResponseMultiple(BaseModel):
+    question: str = Field(description="The question of the quiz")
+    option: list = Field(description=f"""list of strings containing options for the question. Start each option with alphabet like {["A)", "B)", "C)", "D)", "E)"]}. Ensure that there is no comma after the final option.""")
+    correct_answer: str = Field(description="The correct answer to the question")
+    explanation: str = Field(description="Explanation of the correct answer")
 
-def tokens_embbeding(string: str) -> int:
-    """Returns the number of tokens in a text string."""
-    encoding = tiktoken.get_encoding("cl100k_base")
-    encoding = tiktoken.encoding_for_model("text-embedding-ada-002")
-    num_tokens = len(encoding.encode(string))
-    return num_tokens
+# *************** class for Essay output field in JSON Parser
+class ResponseEssay(BaseModel):
+    question: str = Field(description="The question generated based on the context")
+    answer: str = Field(description="The answer to the question")
 
-
-def tokens_llm(string: str) -> int:
-    """Returns the number of tokens in a text string."""
-    encoding = tiktoken.get_encoding("cl100k_base")
-    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-    num_tokens = len(encoding.encode(string))
-    return num_tokens
-
+# *************** retry for refresh_quiz
 def retry_with_openAI(
     func,
     errors: tuple = (openai.RateLimitError,),
@@ -73,84 +75,77 @@ def retry_with_openAI(
 
     return wrapper
 
-
-def setup():
-    # logging.basicConfig(level=logging.INFO,  # Set the logging level
-    #                     format='%(asctime)s [%(levelname)s] - %(message)s',
-    #                     datefmt='%Y-%m-%d %H:%M:%S')
-
-    # logger = logging.getLogger(__name__)
-
-    # logger.info('AstraDB Token Key: ', astradb_token_key)
-    # logger.info('AstraDB API Endpoint: ', astradb_api_endpoint)
-    # logger.info('AstraDB Collection Name: ', astradb_collection_name)
-    embeddings = OpenAIEmbeddings()
-    vstore = AstraDB(
-        embedding=embeddings,
-        collection_name=astradb_collection_name,
-        api_endpoint=astradb_api_endpoint,
-        token=astradb_token_key,
-    )
-    return vstore
-
-
+# *************** define prompt based on type of quiz
 def get_prompt(quiz_type, option_amount, lang):
     part_prompt = """"""
     final_prompt = """"""
-    if (quiz_type == 'multiple'):
-        options = ['A) ...', '   B) ...', '   C) ...', '   D) ...', '   E) ...']
-        for i in range(option_amount):
-            part_prompt += options[i] + '\n'
+    # *************** quiz generated based on the language requested
+    if lang == "fr":
+        language = "You must create in French language."
+    else:
+        language = "You must create in English language."
+    if quiz_type == 'multiple':
+        option_contents = ['Option 1 content', 'Option 2 content', 'Option 3 content', 'Option 4 content', 'Option 5 content']
+    
+        options = []
+        option_labels = ['A', 'B', 'C', 'D', 'E'] 
+
+        for index in range(min(option_amount, len(option_contents))):
+            option = f"{option_labels[index]}) {option_contents[index]}"
+            options.append(option)
+
+        part_prompt = '\n'.join(options)
         final_prompt = f"""
-   You are an expert of the document to create exam for student. Avoid 'all of the above' answer.
-   When creating multiple choices question, set the {option_amount} choices in bullet points with only ONE right answer and put the right answer below it with explanation. Here is the format you MUST follow:
+    You will read this context, understand it, and create quiz for the students. The context is:
+    {{context}}
+   
+    Avoid 'all of the above' answer.
+    When creating multiple choices question, set the {option_amount} hard-to-answer 'options' in bullet points with only ONE right answer and put the right answer below it with explanation. Here is the format you MUST follow:
+    {{format_instructions}}
+    "question": This is the question. Use question sentence. Create question by using the 'context' from the document.
+    "options": an array of {option_amount} strings which consists of {part_prompt}
+    "correct_answer": A) ... (make sure the corrent answer option is matched with the value, based on the option)
+    "explanation": This is the explanation
 
-   Question: What is the purpose of the document "General Standardization Development Guideline"?
-   Options:
-   {part_prompt}
-   Answer: C) ...
-   Explanation: ...
-  """
-    elif (quiz_type == 'essay_long' and lang=="en"):
-        final_prompt = """
-  You are an expert of the document to create essay questions with long answer for students. Create the question and then the answer below. Here is the format you MUST follow:
+    Return in array of object format with each of the above is within an object
+    """
+    elif (quiz_type == 'essay_long'):
+        final_prompt = f"""
+    You are an expert of the document to create COMPLEX and IN-DEPTH essay questions that require detailed, long answers for students. Based on this context:
+    {{context}}
 
-  Question: ...
-  Answer: ...
-  """
+    Create the question and then the answer below. Here is the format you MUST follow:
+    {{format_instructions}}
+    "question": Formulate a complex, thought-provoking question that challenges conceptual understanding.
+    "answer": Provide a comprehensive, detailed answer to the above question.
 
-    elif (quiz_type == 'essay_long' and lang == "fr"):
-        final_prompt = """
-    Vous ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtes un expert du document pour crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©er des questions d'essai avec rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ponse longue pour les ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tudiants. CrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ez la question puis la rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ponse ci-dessous. Voici le format que vous DEVEZ suivre:
-
-    Question: ...
-    Answer: ...
+    Return in array of object format with each of the above is within an object
     """
 
-    elif (quiz_type == 'essay_short' and lang == "en"):
-        final_prompt = """
-    You are an expert of the document to create essay questions with short answer for students. Create the question and then the answer below. Here is the format you MUST follow:
+    elif (quiz_type == 'essay_short'):
+        final_prompt = f"""
+    You are an expert of the document to create CONCISE essay questions that require very brief, one or two-sentence answers for students. Based on this context:
+    {{context}}
 
-    Question: ...
-    Answer: ...
+    Create the question and then the answer below. Here is the format you MUST follow:
+    {{format_instructions}}
+    "question": Draft a straightforward, easily understandable question that can be answered in a few words or a sentence.
+    "answer": Provide a brief, to-the-point answer to the above question.
+
+    Return in array of object format with each of the above is within an object
     """
 
-    elif (quiz_type == 'essay_short' and lang=="fr"):
-        final_prompt = """
-  Vous ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtes un expert du document pour crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©er des questions d'essai avec rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ponse courte pour les ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tudiants.CrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ez la question puis la rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ponse ci-dessous. Voici le format que vous DEVEZ suivre:
-
-  Question: ...
-  Answer: ...
-  """
+    final_prompt += f'\n{language}' 
     return (final_prompt)
+# *************** end of define quiz based on the type
 
-
+# *************** to remove duplicated questions based on question field
 def remove_duplicate_quizzes(quizzes):
     seen_questions = set()
     unique_quizzes = []
 
     for quiz in quizzes:
-        question = quiz.get("question", "")
+        question = quiz.get("question", "").lower()
 
         # Check if the question is not duplicated
         if question not in seen_questions:
@@ -158,350 +153,324 @@ def remove_duplicate_quizzes(quizzes):
             unique_quizzes.append(quiz)
 
     return unique_quizzes
+# *************** end of to remove duplicated questions based on question field
 
-
-def quiz_extract(quiz_text, quiz_type, lang):
-    quiz_pattern = re.compile(r"Quiz (\d+):(.*?)Options:(.*?)(?:Answer: (.*?)\s*)?Explanation:(.*?)\s*(?=Quiz|$)",
-                              re.DOTALL)
-    if (quiz_type == 'multiple'):
-        quiz_pattern = re.compile(
-            r"Question(?::? (\d+))?: (.*?)(?:\nOptions:\n(.*?))?\n(?:Answer|R[eÃƒÆ’Ã‚Â©]ponse): (.*?)\n(?:Explanation|Explication): (.*?)(?=\n\n|$)",
-            re.DOTALL)
-    elif (quiz_type == 'essay_long' or quiz_type == 'essay_short'):
-        quiz_pattern = re.compile(
-            r"Question(?:\s*(\d+))?:\s*(.*?)(?=\n(?:Answer|R[eÃƒÆ’Ã‚Â©]ponse)(?:\s*(\d+))?:|$)\s*(?:Answer|R[eÃƒÆ’Ã‚Â©]ponse)(?:\s*(\d+))?:\s*(.*?)(?=\n(?:Question|R[ÃƒÆ’Ã‚Â©e]ponse)(?:\s*(\d+))?:|$)",
-            re.DOTALL)
-
-    # Find all matches in the text
-    matches = quiz_pattern.findall(quiz_text)
-    # Extracted quiz data
-    quizzes = []
-    if (quiz_type == 'multiple'):
-        for match in matches:
-            question_number, question, options, correct_answer, explanation = match
-            question_text = question if not question_number else question.lstrip('0123456789.: ')
-            options = [opt.strip() for opt in options.split('\n') if opt.strip()] if options else []
-
-            quiz_data = {
-                "question": question_text.strip(),
-                "options": options,
-                "correct_answer": correct_answer.strip(),
-                "explanation": explanation.strip() if explanation else None
-            }
-
-            quizzes.append(quiz_data)
-    elif (quiz_type == 'essay_long' or quiz_type == 'essay_short'):
-        quizzes = [{"question": question.strip(), "answer": answer.strip()} for
-                   question_number, question, _, answer_number, answer, _ in matches]
-        # quizzes.append(quiz_data)
-    return quizzes
-
+#*************** function to retrieve header data from chunks in vector database
 def getChunksData(document_id, amount_of_quiz):
  print('ENTERING getChunksData')
  from astrapy.db import AstraDB, AstraDBCollection
  import random
 
+ #*************** initializing the DB connection and the generator to retrieve data from vector DB
  array_header = set()
- astra_db = AstraDB(token=astradb_token_key,
-                   api_endpoint=astradb_api_endpoint)
- collection = astra_db.collection(collection_name=astradb_collection_name)
- print('ENTER HERE')
- for i in range(len(document_id)):
-   generator = collection.paginated_find(
-    filter={"metadata.document_id": document_id[i]},
-    options={"limit": amount_of_quiz*4 + 8}
+ print('Getting chunks data')
+ for index in range(len(document_id)):
+   generator = topics_collection.paginated_find(
+    filter={"metadata.document_id": document_id[index]},
+    options={"limit": 4*(amount_of_quiz*4 + 8)}
 )
+#*************** end of initializing the DB connection and the generator to retrieve data from vector DB
+   
+#*************** filtering data to get header with certain characteristics.
+
    print(generator)
    for doc in generator:
      if 'metadata' in doc:
-        for i in range(1, 6):
-            header_key = f'header{i}'
+        for index in range(1, 6):
+            header_key = f'header{index}'
             if header_key in doc['metadata']:
                 header_value = doc['metadata'][header_key]
-                if header_value is not None and any(c.isdigit() for c in header_value) == False and 5 <= len(header_value) <= 40:
+                if header_value is not None and 5 <= len(header_value) <= 40:
                     header_value = header_value.replace('\t', ' ').replace('\n', ' ')
                     array_header.add(header_value)
+#*************** end of filtering data to get header with certain characteristics.
 
+#*************** shuffling the required header data
  shuffled_array_header = list(array_header)
  random.shuffle(shuffled_array_header)
  print('DATA LENGTH: ', len(shuffled_array_header))
+ print('All Topics: ', shuffled_array_header)
  return(shuffled_array_header)
+#*************** end of function to retrieve header data from chunks in vector database
 
-def detect_and_create_quizzes(quiz_id, text, source, quiz_type, multiple_option_amount, document_id, lang, quiz_generated=[]):
+#*************** Main function to run the quiz creation
+def detect_and_create_quizzes(quiz_id, quiz_builder_description_id, text, source, quiz_type, multiple_option_amount, document_id, lang, quiz_generated=[]):
     tokens_in = 0
     tokens_out = 0
-    tokens_embbed = 0
-    llm = ChatOpenAI(model='gpt-3.5-turbo', temperature=1, max_tokens=512, model_kwargs={"top_p": 0.5})
-    vstore = setup()
-    retriever = vstore.as_retriever(search_type='similarity', search_kwargs={"k": 10, 'filter': {'course_id': source,
-                                                                                                 'course_document_id':
-                                                                                                     document_id[0]}})
-    memory = ConversationBufferMemory(return_messages=True)
-    condense_q_system_prompt = f"""
-        {get_prompt(quiz_type, multiple_option_amount, lang)}
-      """
-    print(condense_q_system_prompt)
-    tokens_in = tokens_llm(condense_q_system_prompt)
-    condense_q_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", condense_q_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}"),
-        ]
-    )
-    condense_q_chain = condense_q_prompt | llm | StrOutputParser()
-    context_for_prompt = """{context}"""
-    qa_system_prompt = f"""
-       {get_prompt(quiz_type, multiple_option_amount, lang)}
-       {context_for_prompt}
-      """
-    print(qa_system_prompt)
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", qa_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}"),
-        ]
-    )
-    tokens_in += tokens_llm(qa_system_prompt)
+    result_json = []
+    #*************** default set to 30 token usage for each request
+    tokens_embbed = 30
 
-    def format_docs(docs):
-        global tokens_docs
-        tokens_docs = 0
-        for doc in docs:
-            tokens_docs += tokens_llm(doc.page_content)
-        return "\n\n".join(doc.page_content for doc in docs)
-
-    def condense_question(input: dict):
-        if input.get("chat_history"):
-            return condense_q_chain
-        else:
-            return input["question"]
-
-    rag_chain = (
-            RunnablePassthrough.assign(context=condense_question | retriever | format_docs)
-            | qa_prompt
-            | llm
-    )
-    chat_history = []
+    #*************** RAG chain initialization
+    llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.3)
+    # *************** define retrieve for get relevants document in multiple document_id
+    retriever = vstore.as_retriever(
+            search_type ='similarity', 
+            search_kwargs = {
+                "k": 5, 
+                'filter': {
+                    "$and": [
+                        {
+                        'source': source
+                        },
+                        {
+                            "$or": 
+                                [{'document_id': doc_id} for doc_id in document_id]
+                            
+                        }
+                    ]
+                }
+            }
+        )
+    # ********* set object for parser in chain
+    if(quiz_type=='multiple'):
+         parser = JsonOutputParser(pydantic_object=ResponseMultiple)
+    else:
+         parser = JsonOutputParser(pydantic_object=ResponseEssay)
     content_iteration = 0
     quiz_removed_duplicate = quiz_generated
     number_of_quiz_per_iteration = 4
-    keywords = ['generate', 'create', 'quiz', 'question', 'crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©er']
     number_match = re.search(r'\b\d+\b', text)
+    # *************** get heade as topic of content
     content = getChunksData(document_id, int(number_match.group()))
+    #*************** activate cost track
+    with get_openai_callback() as cb_quiz:
+            original_number = int(number_match.group())
+            fix_original_number = original_number
+            print(f"Original Number: {original_number}")
+            #*************** Loop to generate quiz per 4 questions
+            while (len(result_json) < fix_original_number):
+                    #*************** regex substitute the original question. r'\b\d+\b' means targeting digit over words boundary. str(number_of_quiz_per_iteration) is the substituent. {text} is the variable to be substituted by the substituent                     
+                    question = re.sub(r'\b\d+\b', str(number_of_quiz_per_iteration), f"""{text}""")
+                    #*************** end of regex substitute the original question. r'\b\d+\b' means targeting digit over words boundary. str(number_of_quiz_per_iteration) is the substituent. {text} is the variable to be substituted by the substituent                     
+                    question = f"""{question}                        
+                    {get_prompt(quiz_type, multiple_option_amount, lang)}"""
+                    retrieved_docs = ''
+                    # *************** loop topic from header for get context that relevant with that header
+                    for index in range(0,3):
+                        chunks = retriever.get_relevant_documents(content[(4*content_iteration - index) % len(content)])
+                        reordering = LongContextReorder()
+                        chunks = reordering.transform_documents(chunks)
+                        print('CHUNKS RETRIEVED: ', chunks)
+                        # *************** join chunks to one context string
+                        for chunk_content in chunks:
+                            retrieved_docs += chunk_content.page_content
+                    # *************** end of loop topic from header                               
+                    
+                    CUSTOM_QUIZ_PROMPT = PromptTemplate(
+                        template=question,
+                        input_variables=["context"],
+                        partial_variables={"format_instructions": parser.get_format_instructions()}
+                        )     
+                               
+                    content_iteration += 1
+                    print('QUESTION: ', question)
+                    # *************** define chain for chain context, prompt, model and parser
+                    qa_chain = (
+                        {"context": itemgetter("context")}
+                        | CUSTOM_QUIZ_PROMPT
+                        | llm
+                        | parser
+                        ) 
+                    
+                    # *************** try to generate quiz from context given based on header or topic
+                    try:
+                      result = qa_chain.invoke({"context": retrieved_docs})
+                      print('ANSWER: ', result)
+                      
+                    except Exception as e:
+                        print(f"error: {e}")
+                        invalid_format = str(e)
+                        match = re.search(r'\[', invalid_format)
 
-    if any(keyword in text.lower() for keyword in keywords) and number_match:
-        original_number = int(number_match.group())
-        fix_original_number = original_number
-        print(f"Original Number: {original_number}")
-        isFirst = True
-        quiz_text = ''
-        while original_number > 0:
-            if isFirst:
-                if(lang=="en"):
-                    question = re.sub(r'\b\d+\b', str(min(original_number, number_of_quiz_per_iteration)),
-                                  f"{text} about {content[content_iteration]}. Create in English language.")
-                elif (lang == "fr"):
-                    question = re.sub(r'\b\d+\b', str(min(original_number, number_of_quiz_per_iteration)),
-                                      f"{text} about {content[content_iteration]}. Create in French language.")
-                content_iteration += 1
-                print('QUESTION: ', question)
-                ai_msg = rag_chain.invoke({"question": question, "chat_history": chat_history})
-                # ******************************count
-                tokens_out += tokens_llm(ai_msg.content)
-                tokens_in += tokens_llm(question)
-                print(f'first generate usage: {tokens_out}')
-                # ******************************
-                quiz_text += ai_msg.content
-                #  chat_history.extend([HumanMessage(content=question), ai_msg])
-                isFirst = False
-            else:
-                token_quiz_next = 0
-                if(lang=="en"):
-                    question = f"Create {min(original_number, number_of_quiz_per_iteration)} questions about {content[content_iteration]}. Create in English language."
-                elif(lang=="fr"):
-                    question = f"Create {min(original_number, number_of_quiz_per_iteration)} questions about {content[content_iteration]}. Create in French language."
-                content_iteration += 1
-                print('QUESTION: ', question)
-                ai_msg = rag_chain.invoke({"question": question, "chat_history": chat_history})
-                # ****************************count
-                token_quiz_next = tokens_llm(ai_msg.content)
-                tokens_in += tokens_llm(question)
-                print(f'next generate usage: {token_quiz_next}')
-                tokens_out += token_quiz_next
-                print(f'current usage: {tokens_out}')
-                # ****************************
-                quiz_text += ai_msg.content
-            #  chat_history.extend([HumanMessage(content=question), ai_msg])
-            original_number -= number_of_quiz_per_iteration
-        print(quiz_text)
-        # print('-' * 250)
-        # print(len(quiz_result))
-        # print(quiz_result)
-        quiz_result = quiz_extract(quiz_text, quiz_type, lang)
-        quiz_removed_duplicate = remove_duplicate_quizzes(quiz_result)
-        while (len(quiz_removed_duplicate) < fix_original_number):
-            print(len(quiz_removed_duplicate))
-            token_quiz_dup = 0
-            if(lang=="en"):
-              question = f"Create {(fix_original_number - len(quiz_removed_duplicate))} questions about {content[content_iteration]}. Create in English language."
-            elif(lang=="fr"):
-              question = f"Create {(fix_original_number - len(quiz_removed_duplicate))} questions about {content[content_iteration]}. Create in French language."
+                        if match:
+                            start_index = match.start()
+                            array_string = invalid_format[start_index:]
+                            json_string = re.sub(r',\s*]', ']', array_string)
+                            result = json.loads(json_string)
+                        else:
+                            print(f"No array found: {e}")
 
-            content_iteration += 1
-            print(question)
-            ai_msg = rag_chain.invoke({"question": question, "chat_history": chat_history})
-            print(ai_msg.content)
-            # ***************************count
-            token_quiz_dup = tokens_llm(ai_msg.content)
-            tokens_in += tokens_llm(question)
-            print(f'change dup generate usage: {token_quiz_dup}')
-            tokens_out += token_quiz_dup
-            print(f'current usage: {tokens_out}')
-            # ***************************
-            more_quiz_result = quiz_extract(ai_msg.content, quiz_type, lang)
-            quiz_removed_duplicate.extend(more_quiz_result)
-            quiz_removed_duplicate = remove_duplicate_quizzes(quiz_removed_duplicate)
-            # chat_history.extend([HumanMessage(content=question), ai_msg])
+                    result_json.extend(result)
+                      # *************** validate option field is same as expected long of option amount
+                    if quiz_type == 'multiple':
+                        result_json = [obj for obj in result_json if len(obj.get("options", [])) == multiple_option_amount]
 
-        url_webhook = os.getenv("URL_WEBHOOK_QUIZ_BUILDER")
-        callWebhook(quiz_id, url_webhook, quiz_result, tokens_in, tokens_out, tokens_embbed)
-        return quiz_removed_duplicate, tokens_in, tokens_out, tokens_embbed
-    else:
-        return False
+                    print("LEN RESULT JSON: ", len(result_json))
+                    result_json = remove_duplicate_quizzes(result_json)
+                    print('RESULT_JSON: ', result_json)
+                    # ****************************** count tokens for cost tracking
+                    print(f'generate usage: {cb_quiz.total_tokens}')
+                    # ****************************** end of count tokens for cost tracking
+                    original_number -= len(result_json)
+                #*************** end of Loop to generate quiz per 4 questions
+
+            tokens_in = cb_quiz.prompt_tokens
+            tokens_out = cb_quiz.completion_tokens
+            #*************** end cost track usage
+            callWebhook(quiz_id, quiz_builder_description_id, url_webhook, result_json[:fix_original_number], tokens_in, tokens_out, tokens_embbed, 'success', lang)
+            return quiz_removed_duplicate, tokens_in, tokens_out, tokens_embbed
 
 
-@retry_with_openAI
-def quiz_builder(quiz_id, number_of_quiz, source, type_of_quiz, multiple_option_amount, document_id, lang):
+def quiz_builder(quiz_id, quiz_builder_description_id, number_of_quiz, source, type_of_quiz, multiple_option_amount, document_id, lang):
     # rag_chain()
     quiz_word = ''
     if (type_of_quiz == 'multiple'):
-        quiz_word = 'quizzes'
-    else:
         quiz_word = 'questions'
+    else:
+        quiz_word = 'questions with the answer'
 
     text = f"Create {number_of_quiz} {quiz_word}"
-    string_quiz, tokens_in, tokens_out, tokens_embbed = detect_and_create_quizzes(quiz_id, text, source, type_of_quiz, multiple_option_amount, document_id, lang)
-    print('quiz result: ', string_quiz)
-    print(f"tokens_docs: {tokens_docs}")
-    tokens_in += tokens_docs
+    #*************** try and catch to handle error rate limit status from OpenAI. If error rate limit, send webhook with status 'Rate Limit'
+    try:
+        string_quiz, tokens_in, tokens_out, tokens_embbed = detect_and_create_quizzes(quiz_id, quiz_builder_description_id, text, source, type_of_quiz, multiple_option_amount, document_id, lang, [])
+        print("Webhook success called")
+    except openai.RateLimitError as er:
+        print(er)
+        callWebhook(quiz_id, quiz_builder_description_id, url_webhook, [], 0, 0, 0, 'rate_limit', lang)
+        print("Webhook rate limit called")
+    #*************** end of try and catch to handle error rate limit status from OpenAI. If error rate limit, send webhook with status 'Rate Limit'
+
     print(f"tokens_in: {tokens_in}")
     print(f"tokens_out: {tokens_out}")
     print(f"tokens usage: {tokens_in + tokens_out}")
     return string_quiz, tokens_in, tokens_out, tokens_embbed
 
 
+#*************** function for quiz refresh
 @retry_with_openAI
 def quiz_editor(source, type_of_quiz, multiple_option_amount, quiz_generated, document_id, lang):
     tokens_refresh_out = 0
     tokens_refresh_in = 0
-    tokens_refresh_embbed = 0
+    tokens_refresh_embbed = 30
+    result_json = []
+    quiz_word = ''
+
+    # ********* set prompt type andw object for parser in chain
+    if (type_of_quiz == 'multiple'):
+        quiz_word = 'quiz'
+        parser = JsonOutputParser(pydantic_object=ResponseMultiple)
+    else:
+        quiz_word = 'question with the answer'
+        parser = JsonOutputParser(pydantic_object=ResponseEssay)
+    text = f"Create 1 {quiz_word}"
+    # *************** get header as content of topic
     content = getChunksData(document_id, 10)
-    llm = ChatOpenAI(model='gpt-3.5-turbo', temperature=1, max_tokens=512)
-    vstore = setup()
-    retriever = vstore.as_retriever(search_type='similarity', search_kwargs={"k": 10, 'filter': {'course_id': source,
-                                                                                                 'course_document_id':
-                                                                                                     document_id[0]}})
-    condense_q_system_prompt = f"""
-    {get_prompt(type_of_quiz, multiple_option_amount, lang)}
-  """
-    print(condense_q_system_prompt)
-    condense_q_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", condense_q_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}"),
-        ]
-    )
-    tokens_refresh_in = tokens_llm(condense_q_system_prompt)
-    condense_q_chain = condense_q_prompt | llm | StrOutputParser()
-    context_for_prompt = """{context}"""
-    qa_system_prompt = f"""
-   {get_prompt(type_of_quiz, multiple_option_amount, lang)}
- {context_for_prompt}
-  """
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", qa_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}"),
-        ]
-    )
-    tokens_refresh_in += tokens_llm(qa_system_prompt)
-
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-
-    def condense_question(input: dict):
-        if input.get("chat_history"):
-            return condense_q_chain
-        else:
-            return input["question"]
-
-    rag_chain = (
-            RunnablePassthrough.assign(context=condense_question | retriever | format_docs)
-            | qa_prompt
-            | llm
-    )
-    i=0
-    chat_history = []
-    quiz_removed_duplicate = []
-    quiz_removed_duplicate.extend(quiz_generated)
+    #*************** RAG chain initialization
+    llm = ChatOpenAI(model='gpt-4o-mini', temperature=1)
+    # *************** define retrieve for get relevants document in multiple document_id
+    retriever = vstore.as_retriever(
+                search_type ='similarity', 
+                search_kwargs = {
+                    "k": 10, 
+                    'filter': {
+                        "$and": [
+                            {
+                            'source': source
+                            },
+                            {
+                                "$or": 
+                                    [{'document_id': doc_id} for doc_id in document_id]
+                                
+                            }
+                        ]
+                    }
+                }
+            )   
+    #*************** end of RAG chain initialization
+    content_iteration = 0
+    print('QUIZ GENERATED', quiz_generated)
+    result_json.extend(quiz_generated)
+    print(len(result_json))
+    #*************** loop to generate a quiz refresh
     with get_openai_callback() as cb_refresh:
-        while (len(quiz_removed_duplicate) < len(quiz_generated) + 2):
+            while (len(result_json) < len(quiz_generated) + 1):
+                    question = f"""{text}                        
+                    {get_prompt(type_of_quiz, multiple_option_amount, lang)}"""
+                    retrieved_docs = ''
+                    chunks = retriever.get_relevant_documents(content[(content_iteration) % len(content)])
+                    reordering = LongContextReorder()
+                    chunks = reordering.transform_documents(chunks)
+                    print('CHUNKS RETRIEVED: ', chunks)
+                    # *************** join chunks to one context string
+                    for chunk_content in chunks:
+                        retrieved_docs += chunk_content.page_content                           
+                    
+                    CUSTOM_QUIZ_PROMPT = PromptTemplate(
+                        template=question,
+                        input_variables=["context"],
+                        partial_variables={"format_instructions": parser.get_format_instructions()}
+                        )     
+                               
+                    content_iteration += 1
+                    print('QUESTION: ', question)
+                    # *************** define chain for chain context, prompt, model and parser
+                    qa_chain = (
+                        {"context": itemgetter("context")}
+                        | CUSTOM_QUIZ_PROMPT
+                        | llm
+                        | parser
+                        ) 
+                    
+                    # *************** try to generate quiz from context given based on header or topic
+                    try:
+                      result = qa_chain.invoke({"context": retrieved_docs})
+                      print('ANSWER: ', result)
+                      
+                    except Exception as e:
+                        print(f"error: {e}")
+                        invalid_format = str(e)
+                        match = re.search(r'\[', invalid_format)
 
-            if(lang=='en'):
-             question = f"create 2 questions about {content[i]} from the document. Create in English language."
-            elif(lang=='fr'):
-             question = f"create 2 questions about {content[i]} from the document. Create in French language."
+                        if match:
+                            start_index = match.start()
+                            array_string = invalid_format[start_index:]
+                            json_string = re.sub(r',\s*]', ']', array_string)
+                            print(f"refresh: {json_string}")
+                            result = json.loads(json_string)
+                        else:
+                            print(f"No array found: {e}")
 
-            ai_msg = rag_chain.invoke({"question": question, "chat_history": chat_history})
-            # **********************count
-            retrieved_docs = retriever.get_relevant_documents(question)
-            for i in range(len(retrieved_docs)):
-                tokens_refresh_in += tokens_llm(retrieved_docs[i].page_content)
-            tokens_refresh_out += tokens_llm(ai_msg.content)
-            print("CALLBACK: ", cb_refresh)
-            print(f'refresh generate usage: {tokens_refresh_out}')
-            print(f'current generate usage: {tokens_refresh_out} {tokens_refresh_in}')
-            tokens_refresh_in += tokens_llm(question)
-            # **********************
-            # chat_history.extend([HumanMessage(content=question), ai_msg])
-            quiz_result = quiz_extract(ai_msg.content, type_of_quiz, lang)
-            quiz_removed_duplicate.extend(quiz_result)
-            quiz_removed_duplicate = remove_duplicate_quizzes(quiz_removed_duplicate)
-            i+=1
-        print(f'cb usage: {cb_refresh.total_tokens}')
-        tokens_refresh_in = cb_refresh.prompt_tokens
-        tokens_refresh_out = cb_refresh.completion_tokens
+                    result_json.extend(result)
+                      # *************** validate option field is same as expected long of option amount
+                    if type_of_quiz == 'multiple':
+                        result_json = [obj for obj in result_json if len(obj.get("options", [])) == multiple_option_amount]
 
-    print(len(quiz_result))
-    print(print(f"in: {tokens_refresh_in}"))
-    print(print(f"out: {tokens_refresh_out}"))
-    print(print(f"embbed: {tokens_refresh_embbed}"))
-    print(quiz_result)
-    quiz_send = quiz_result[0]
-    return quiz_send, tokens_refresh_in, tokens_refresh_out, tokens_refresh_embbed
+                    print("LEN RESULT JSON: ", len(result_json))
+                    result_json = remove_duplicate_quizzes(result_json)
+                    print('RESULT_JSON: ', result_json)
+                    # ****************************** count tokens for cost tracking
+                    # ****************************** end of count tokens for cost tracking
+    print(f'cb usage: {cb_refresh.total_tokens}')
+    tokens_refresh_in = cb_refresh.prompt_tokens
+    tokens_refresh_out = cb_refresh.completion_tokens
 
-def callWebhook(quiz_id, url, quiz_result, tokens_in, tokens_out, tokens_embbed):
-    logging.basicConfig(level=logging.INFO,  # Set the logging level
-                        format='%(asctime)s [%(levelname)s] - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
+    #*************** end of loop to generate a quiz refresh
+    print(f"in: {tokens_refresh_in}")
+    print(f"out: {tokens_refresh_out}")
+    print(f"embbed: {tokens_refresh_embbed}")
+    return result_json[-1], tokens_refresh_in, tokens_refresh_out, tokens_refresh_embbed
 
+
+#*************** function to call webhook to send result of quiz creation to BE
+def callWebhook(quiz_id, quiz_builder_description_id, url, quiz_result, tokens_in, tokens_out, tokens_embbed, status, lang):
+    logging.basicConfig(
+        filename='error.log', # Set a file for save logger output 
+        level=logging.INFO, # Set the logging level
+        format='%(asctime)s [%(levelname)s] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
     logger = logging.getLogger(__name__)
 
-    payload = {'quiz_builder_id': quiz_id, 'quiz_result': quiz_result, 'tokens_in': tokens_in, 'tokens_out': tokens_out, 'tokens_embbed': tokens_embbed}  # Replace with your JSON payload
+    payload = {'quiz_builder_id': quiz_id, 'quiz_builder_description_id': quiz_builder_description_id, 'quiz_result': quiz_result, 'tokens_in': tokens_in, 'tokens_out': tokens_out, 'tokens_embbed': tokens_embbed, 'status_quiz': status, 'lang': lang}  # Replace with your JSON payload
     response = requests.post(url, json=payload)
     logger.info('Webhook response: ', response,'Quiz ID: ', quiz_id, ' || Quiz Result: ', quiz_result, ' || Tokens Embbed: ', tokens_embbed)
 
+#*************** end of function to call webhook to send result of quiz creation to BE
 
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     # getChunksData(['65bb42cc990d20d41186a373'])
-    quiz_result, tokens_in, tokens_out, tokens_embbed = quiz_builder('quiz_id',
-        5, '65bb261763a966b42e410886', 'essay_short', 4, ['65bb5818990d20d41186ba97'], 'fr')
-    #     quiz_result, tokens_refresh_in, tokens_refresh_out, tokens_refresh_embbed =quiz_editor('65bb261763a966b42e410886', 'essay_short', 3, [{'question': 'What is the purpose of evaluating activities in the context of deep work rituals?', 'answer': 'The purpose of evaluating activities in the context of deep work rituals is to determine their effectiveness in helping individuals achieve deep work and maximize productivity.'}], ['65bb42cc990d20d41186a373'], "en")
-    #     print(quiz_result)
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    # quiz_result, tokens_in, tokens_out, tokens_embbed = quiz_builder('quiz_id', 'quiz_builder_description_id',
+    #     2, 'test_vi_15032024_venom', 'multiple', 2, ['test_vi_15032024_venom'], 'en')
+        quiz_result, tokens_refresh_in, tokens_refresh_out, tokens_refresh_embbed =quiz_editor('reni_test3', 'essay_short', 3, [{'question': 'What is the purpose of evaluating activities in the context of deep work rituals?', 'answer': 'The purpose of evaluating activities in the context of deep work rituals is to determine their effectiveness in helping individuals achieve deep work and maximize productivity.'}], ['65bb42cc990d20d41186a373'], "en")
+        print(quiz_result)

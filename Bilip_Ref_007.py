@@ -1,117 +1,62 @@
-from langchain import hub
 from langchain.prompts import PromptTemplate, MessagesPlaceholder
-from langchain.chains import LLMChain, ConversationalRetrievalChain
+from langchain.chains import LLMChain
 from langchain.prompts.chat import (
     ChatPromptTemplate
 )
-from langchain.memory import ConversationBufferMemory
-from langchain.chat_models import ChatOpenAI
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.memory import ConversationBufferWindowMemory
+from langchain_community.chat_message_histories.in_memory import ChatMessageHistory
+from langchain_community.chat_models.openai import ChatOpenAI
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.feature_extraction.text import TfidfVectorizer
-import openai
+from flask import Flask,g
 import nltk
+from nltk.tokenize import word_tokenize
 import os
 import re
 import time
 from dotenv import load_dotenv
-from langdetect import detect
 import spacy
-import tiktoken
-
-from langchain.callbacks import get_openai_callback
+from langchain.callbacks.manager import get_openai_callback
 from langchain.schema.messages import AIMessage, HumanMessage
-
-from langchain.vectorstores import AstraDB
+from lingua import Language, LanguageDetectorBuilder
+from setup import vstore
 
 load_dotenv()
+app_akadbot = Flask(__name__)
+with app_akadbot.app_context():
+    def set_retrieved_docs_akadbot(docs):
+        g.retrieved_docs_akadbot = docs
+        
+    def get_retrieved_docs_akadbot():
+        return g.retrieved_docs_akadbot
+
+# ********* set token for openai and datastax
 openai_api_key = os.getenv("OPENAI_API_KEY")
 os.environ["OPENAI_API_KEY"] = openai_api_key
-print(f'api: {openai_api_key}')
 
 nltk.download("punkt")
-
-def tokens_embbeding(string: str) -> int:
-    """Returns the number of tokens in a text string."""
-    encoding = tiktoken.get_encoding("cl100k_base")
-    encoding = tiktoken.encoding_for_model("text-embedding-ada-002")
-    num_tokens = len(encoding.encode(string))
-    return num_tokens
-
-def tokens_llm(string: str) -> int:
-    """Returns the number of tokens in a text string."""
-    encoding = tiktoken.get_encoding("cl100k_base")
-    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-    num_tokens = len(encoding.encode(string))
-    return num_tokens
-
-def retry_with_openAI(
-    func,
-    errors: tuple = (openai.RateLimitError,),
-):
-    """Retry a function with exponential backoff."""
-
-    def wrapper(*args, **kwargs):
-        # Loop until a successful response or max_retries is hit or an exception is raised
-        while True:
-            try:
-                return func(*args, **kwargs)
-
-            # Retry on specified errors
-            except errors as e:
-                print("delay for a minute")
-                print(f"Error message: {e}")
-                # Increment the delay
-                delay = 60.0
-
-                # Sleep for the delay
-                time.sleep(delay)
-
-            # Raise exceptions for any errors not specified
-            except Exception as e:
-                raise e
-
-    return wrapper
-
-def setup():
-    astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
-    astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
-    astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
-    print(f'token_db: {astradb_token_key}')
-    print(f'endpoint: {astradb_api_endpoint}')
-    print(f'collection: {astradb_collection_name}')
-
-    embeddings = OpenAIEmbeddings()
-
-    vstore = AstraDB(
-        embedding=embeddings,
-        collection_name=astradb_collection_name,
-        api_endpoint=astradb_api_endpoint,
-        token=astradb_token_key,
+nlp = spacy.load("en_core_web_lg")
+greetings_en = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'hi, how is it going?', 'greetings!', 'how are you doing?', 'how do you do?', 'what`s up?']
+greetings_fr = ['bonjour', 'salut', 'coucou', 'bonsoir', 'bonjour à tous', 'comment allez-vous ce matin ?', 'bonne journée', 'bonne soirée', 'bonne nuit', 'À bientôt', 'À plus tard', 'À tout à lheure', 'À demain', 'Ça va?', 'enchanté']
+language_data = [Language.ENGLISH, Language.FRENCH]
+detector = LanguageDetectorBuilder.from_languages(*language_data).build()
+llm = ChatOpenAI(
+        model="gpt-4o-mini", temperature=0
     )
-    return vstore
-
-
-def calculate_similarity(question, document):
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform([question, document])
-    similarity = cosine_similarity(tfidf_matrix[0], tfidf_matrix[1])
-    return similarity[0, 0]
-
+llm_topic = ChatOpenAI(
+            model="gpt-4o-mini", temperature=0.5, max_tokens=50
+        )
 
 def check_similarity(answer, chunks):
-    nlp = spacy.load("en_core_web_sm")
-    question_tokens = nlp(answer)
-    question2_tokens = nlp(chunks)
-    similarity_score = calculate_similarity(question_tokens.text, question2_tokens.text)
+    answer_tokens = nlp(answer)
+    chunks_tokens = nlp(chunks)
+    similarity_score = answer_tokens.similarity(chunks_tokens)
 
-    # Set a threshold for similarity
-    threshold = 0.23
+    # ********* Set a threshold for similarity
+    threshold = 0.75
 
-    # Check if the similarity score is above the threshold
+    # ********* Check if the similarity score is above the threshold
     if similarity_score > threshold:
         print("Similarity score: ", similarity_score)
         return True
@@ -119,44 +64,157 @@ def check_similarity(answer, chunks):
         print("Similarity score: ", similarity_score)
         return False
 
-
-def historyTomemory(chat_history, memory):
+def historyTomemory(chat_history, add_memory):
     print('Into historyTomemory process...')
     input = []
     output = []
     header_ref_array = []
-    for i in range(len(chat_history)):
-        print('CHAT HISTORY')
-        if chat_history[i]['type'] == 'human':
-            input.append(chat_history[i]['content'])
-        else:
-            output.append(chat_history[i]['content'])
-            header_ref_array.append(chat_history[i]['header_ref'])
+    store_chat_history = []
+    index_chat = 0
+
+    # ********* convert chat_history object from BE
+    # ********* looping until all chat_histoy index is done, from 0 to same length with chat_histoy
+    while index_chat < len(chat_history)-1:
+        
+        # ********* Checking every first chat_history is human_message and the next chat is ai_message 
+        if chat_history[index_chat]['type'] == 'human':
+            input.append(chat_history[index_chat]['content'])
+
+            # ********* Check the next chat is ai_message
+            if chat_history[index_chat+1]['type'] == 'ai':
+                output.append(chat_history[index_chat+1]['content'])
+                header_ref_array.append(chat_history[index_chat+1]['header_ref'])
+
+            # ********* if after human_message is not ai_message will add empty ai_message 
+            else:
+                output.append('')
+                header_ref_array.append('')
+        index_chat += 1
     print('HEADER_REF_ARRAY INPUT: ', header_ref_array)
-    for idx in range(len(input)):
-        memory.save_context({"input": input[idx]}, {"output": output[idx]})
-    return header_ref_array
+    
+    # ********* inject human_message and ai_message from chat_history to our engine memory
+    for index_input in range(len(input)):
+        add_memory.add_user_message(input[index_input])
+        add_memory.add_ai_message(output[index_input])
+        store_chat_history.extend([HumanMessage(content=input[index_input]), AIMessage(content=output[index_input])])
+    return header_ref_array, add_memory, store_chat_history
 
 
-def ragChain(vstore, source, chat_history):
-    print("RAG Chain creating...")
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.3, max_tokens=512
-    )
+def detect_language_langdetect(text):
+    # ********* detect language used from a sentence use langdetect
+    try:
+        detected_language = detector.detect_language_of(text).name.lower()
+        return detected_language
+    # ********* set default to english if langdetection is error
+    except Exception as error_lang:
+        print("An error occurred:", error_lang)
+        return "english"
+    
+def detect_greetings(text):
+    # ********* detect question input
+    lang = detect_language_langdetect(text)
+    print(f'lang: {lang}')
+    # ********* word_tokenize into english if question is french
+    if lang == 'french':
+        # ********* tokenizing question input
+        words = word_tokenize(text.lower(), language=lang)
+        greetings = greetings_fr
+    # ********* default to english
+    else:
+        words = word_tokenize(text.lower())
+        greetings = greetings_en
+    # ********* check each word
+    for word in words:
+        # ********* True if find greetings word from question input
+        if word in greetings:
+            return True
+    return False
+
+def topic_creation(chat_history):
+  # ********* create topic based on first question
+  start_time = time.time()
+  temporary_hist = []
+  print(f'Into topic_creation : {chat_history}')
+  
+  # ********* loop each chat_history 
+  for history in chat_history:
+
+    # ********* get question that human chat
+    if history.type == "human":
+        list_history = {"type": "human", "content": history.content}
+    
+    # ********* get answer that ai chat
+    elif history.type == "ai":
+        list_history = {"type": "ai", "content": history.content}
+    temporary_hist.append(list_history)
+  
+  # ********* get first question
+  print(f"temp_hist: {temporary_hist}")
+  question = temporary_hist[0]['content']
+  
+  # ********* detect language used from first question
+  lang_topic = detect_language_langdetect(question)
+  
+  # ********* set prompt so engine can understand question and lang when create topic
+  if lang_topic == 'french':
+    custom_template = """
+        Créer un en-tête de titre à partir du texte ci-dessous. Ne pas inventer la réponse. Créer en langue française.
+        {question}
+        """
+  else:
+    custom_template = """
+        Create a title header from the text below. Do not make up the answer. Create in English Language.
+        {question}
+        """
+  CUSTOM_QUESTION_PROMPT = PromptTemplate(input_variables=["question"], template=custom_template)
+
+  print(f"lang: {lang_topic}")
+  print(f'question: {question}')
+  llmchain = LLMChain(llm=llm_topic, prompt=CUSTOM_QUESTION_PROMPT)
+  
+  # ********* invoke topic
+  with get_openai_callback() as cost_topic:
+    output = llmchain.invoke({"question": question})
+
+    # ********* clean ai answer
+    output = re.sub(r'Title:\s*', '', output['text'])
+    output = re.sub(r'Title Header:\s*', '', output)
+    output = re.sub(r'\n\n', ' ', output)
+    output_token_cb = cost_topic.completion_tokens
+    input_token_cb = cost_topic.prompt_tokens
+    print("Topic Usage")
+    print(f'cb in: {input_token_cb}')
+    print(f'cb out: {output_token_cb}')
+
+  # ********* calculate time for topic created
+  end_time = time.time()
+  print(f'topic() TIME usage: {end_time-start_time} seconds')
+  return output
+
+def ragChain(source, chat_history):
     retriever = vstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 2, "filter": {"course_id": source}}
+
+        search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.6, "filter": {"source": source}}
     )
-    memory = ConversationBufferMemory(return_messages=True)
+    memory = ConversationBufferWindowMemory(k=1, return_messages=True)
+
     retriever_from_llm = MultiQueryRetriever.from_llm(retriever=retriever, llm=llm)
-    #add history to the memory
+    
+    
+    # ********* add history to the memory
+    add_memory = ChatMessageHistory()
     header_ref_array = []
     if chat_history == []:
         print('no history')
     else:
-        header_ref_array = historyTomemory(chat_history, memory)
-
+        print('is history')
+        # ********* set current memory and get header reference from history
+        header_ref_array, add_memory, chat_history = historyTomemory(chat_history, add_memory)
+    
+    memory = ConversationBufferWindowMemory(k=1, chat_memory=add_memory, return_messages=True)
+    # ********* set system prompt for bot can understanding the main job
     condense_q_system_prompt = """
-  You are an expert of the document. Generate answer only based on the given context. Do not make up the answer.
+  You are an expert of the document. Generate answer only based on the given '''context'''. Do not make up the answer.
     """
     condense_q_prompt = ChatPromptTemplate.from_messages(
         [
@@ -167,9 +225,10 @@ def ragChain(vstore, source, chat_history):
     )
     condense_q_chain = condense_q_prompt | llm | StrOutputParser()
 
+    # ********* set QA chain prompt for bot can understand context
     qa_system_prompt = """
   You are an expert of the document. Generate answer only based on the given context. Do not make up the answer.
-  The context is {context} and the question is {question}
+  The context is '''{context}''' and the question is '''{question}'''
     """
     qa_prompt = ChatPromptTemplate.from_messages(
         [
@@ -178,223 +237,124 @@ def ragChain(vstore, source, chat_history):
             ("human", "{question}"),
         ]
     )
+
+    # ********* looping all chunks to one context
     def format_docs(docs):
-        global retrieved_docs
         retrieved_docs = []
         for doc in docs:
-           retrieved_docs.append(doc)
+            retrieved_docs.append(doc)
+        set_retrieved_docs_akadbot(retrieved_docs)
         return "\n\n".join(doc.page_content for doc in docs)
 
+    # ********* get question only or get question with history context
     def condense_question(input: dict):
         if input.get("chat_history"):
             return condense_q_chain
         else:
             return input["question"]
-
+    # ********* build chain with retriever context, the context it self, prompt and llm
     rag_chain = (
         RunnablePassthrough.assign(
             context=condense_question | retriever_from_llm | format_docs
-        ) 
+        )
         | qa_prompt
         | llm
     )
-    return rag_chain, memory, header_ref_array
-
-
-def topic_creation(chat_history):
-  
-  temp_hist = []
-  print(f'Into topic_creation : {chat_history}')
-  for hist in chat_history:
-    if hist.type == "human":
-        list_hist = {"type": "human", "content": hist.content}
-    elif hist.type == "ai":
-        list_hist = {"type": "ai", "content": hist.content}
-    temp_hist.append(list_hist)
-
-  conv = temp_hist[0]['content']
-
-  def detect_language_langdetect(text):
-    try:
-        detected_language = detect(text)
-        return detected_language
-    except Exception as e:
-        print("An error occurred:", e)
-        return "en"
-    
-  result = detect_language_langdetect(conv)
-  custom_template = """
-    Create a title header from the text below. use the laguage code {lang}.
-    {question}
-    """
-
-  CUSTOM_QUESTION_PROMPT = PromptTemplate(input_variables=["lang", "question"], template=custom_template)
-  llm_topic = ChatOpenAI(
-            model="gpt-3.5-turbo", temperature=0.5, max_tokens=50
-        )
-  print(f"lang: {result}")
-  print(f'question: {conv}')
-  llmchain = LLMChain(llm=llm_topic, prompt=CUSTOM_QUESTION_PROMPT)
-  with get_openai_callback() as cost_topic:
-    output = llmchain.invoke({"lang":result, "question": conv})
-    output = re.sub(r'Title:\s*', '', output['text'])
-    output = re.sub(r'Title Header:\s*', '', output)
-    output = re.sub(r'\n\n', ' ', output)
-    output_token_cb = cost_topic.completion_tokens
-    input_token_cb = cost_topic.prompt_tokens
-    print("Topic Usage")
-    print(f'cb in: {input_token_cb}')
-    print(f'cb out: {output_token_cb}')
-  return output, output_token_cb, input_token_cb
-
+    return rag_chain, memory, header_ref_array, chat_history
 
 def ask_with_memory(question, source, chat_history=[], topics=''):
-    # setup()
-    import time
-    vstore = setup()
-    custom_template = """
-    This is conversation with a human. Answer the questions you get based on the knowledge you have.
-    If you don't know the answer, just say that you don't, don't try to make up an answer.
-    Chat History:
-    {chat_history}
-    Follow Up Input: {question}
-    """
-    CUSTOM_QUESTION_PROMPT = PromptTemplate.from_template(custom_template)
 
-    rag_chain, memory, header_ref_array = ragChain(vstore, source, chat_history)
+    rag_chain, memory, header_ref_array, chat_history = ragChain(source, chat_history)
     message = ''
     header_ref = ''
-    # chat history is memory from same with database request
-    print(f"inside memory: {memory.buffer}")
-    if chat_history != []:
-        chat_history = memory.buffer
-    else:
-        chat_history = memory.buffer
-    print(f"current history: {chat_history}")
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.5, max_tokens=512
-    )
-    retriever = vstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 3, "filter": {"source": source}}
-    )
-    with get_openai_callback() as cost_ask:
-        # Answering question with rag_chain
+
+    with get_openai_callback() as cb:
+        print(f"memory: {memory.chat_memory.messages}")
+        # ********* get langauge used from question
+        lang_question = detect_language_langdetect(question)
+        print(f'input lang used: {lang_question}')
         start_time = time.time()
-        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-        qa = ConversationalRetrievalChain.from_llm(
-            llm,
-            retriever,
-            condense_question_prompt=CUSTOM_QUESTION_PROMPT,
-            memory=memory,
-        )
-        # ai_msg = rag_chain.invoke({"question": question, "chat_history": chat_history})
-        result = qa({"question": question})
-        print(result['answer'])
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"TIME TO INVOKE: {elapsed_time} seconds")
-        tokens_embbed = 30
-        print(f"ai answer: {result['answer']}")
-        chunks_content = ''
-        source_documents = retriever.get_relevant_documents(question)
-        print('SOURCE DOCUMENTS: ', source_documents[0].page_content)
-        retrieved_docs = source_documents
-        retrieved_docs_vector_checked = []
-        start_time_check_similarity = time.time()
-        # chek similarity from chunk and answer for relevant chun above 0.3 similarity
-        for i in range(len(retrieved_docs)):
-            if check_similarity(result['answer'], retrieved_docs[i].page_content):
-                chunks_content += retrieved_docs[i].page_content
-                retrieved_docs_vector_checked.extend(retrieved_docs[i])
-        if (check_similarity(result['answer'], chunks_content)):
-            message = result['answer']
-            # Adding Header, chat_history,
-            for x in range(len(retrieved_docs)):
-              if (check_similarity(result['answer'], retrieved_docs[x].page_content)):
-                header_ref = f"{header_ref} - {retrieved_docs[x].metadata['document_name']}"
-                if ('header1' in retrieved_docs[x].metadata) & (retrieved_docs[x].metadata['header1'] != None):
-                    header_ref = f"{header_ref} > {retrieved_docs[x].metadata['header1']}"
-                if ('header2' in retrieved_docs[x].metadata) & (retrieved_docs[x].metadata['header2'] != None):
-                    header_ref = f"{header_ref} > {retrieved_docs[x].metadata['header2']}"
-                if ('header3' in retrieved_docs[x].metadata) & (retrieved_docs[x].metadata['header3'] != None):
-                    header_ref = f"{header_ref} > {retrieved_docs[x].metadata['header3']}"
-                if ('header4' in retrieved_docs[x].metadata) & (retrieved_docs[x].metadata['header4'] != None):
-                    header_ref = f"{header_ref} > {retrieved_docs[x].metadata['header4']}"
-                header_ref += "\n"
-            # print(header_ref)
-            end_time_check_similarity = time.time()
-            elapsed_time_check_similarity = end_time_check_similarity - start_time_check_similarity
-            print(f"Elapsed Time Check Similarity: {elapsed_time_check_similarity} seconds")
-            chat_history.extend([HumanMessage(content=question), AIMessage(content=result['answer'])])
+        if detect_greetings(question.lower()):
+            # ********* invoke answer for greetings
+            ai_msg = llm.invoke(question)
+            # ********* save as message response
+            message = ai_msg.content
+
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"TIME TO INVOKE: {elapsed_time} seconds")
+            # ********* Add current question and answer into chat history, also header reference but null
+            chat_history.extend([HumanMessage(content=question), ai_msg])
+            header_ref_array.append('')
+        else:
+            # ********* Answering question with rag_chain
+            ai_msg = rag_chain.invoke({"question": question, "chat_history": memory.chat_memory.messages})
+            message = ai_msg.content
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"TIME TO INVOKE: {elapsed_time} seconds")
+            retrieved_docs = get_retrieved_docs_akadbot()
+            print(f"chunks: {len(retrieved_docs)}")
+            # chek similarity from chunk and answer for relevant chun above 0.3 similarity
+            start_time_check_similarity = time.time()
+            for index_docs in range(len(retrieved_docs)):
+                    # ********* compare ansewr and chunks context distance similarity, if similarity > 0.23, add header
+                    if (check_similarity(message, retrieved_docs[index_docs].page_content)):
+
+                        # ********* set first reference is document name
+                        header_ref = f"{header_ref} - {retrieved_docs[index_docs].metadata['document_name']}"
+                        # ********* if there is header1 on metadata and set as next reference
+                        if ('header1' in retrieved_docs[index_docs].metadata) & (retrieved_docs[index_docs].metadata['header1'] != None):
+                            header_ref = f"{header_ref} > {retrieved_docs[index_docs].metadata['header1']}"
+                        # ********* if there is header2 on metadata and set as next reference
+                        if ('header2' in retrieved_docs[index_docs].metadata) & (retrieved_docs[index_docs].metadata['header2'] != None):
+                            header_ref = f"{header_ref} > {retrieved_docs[index_docs].metadata['header2']}"
+                        # ********* if there is header3 on metadata and set as next reference
+                        if ('header3' in retrieved_docs[index_docs].metadata) & (retrieved_docs[index_docs].metadata['header3'] != None):
+                            header_ref = f"{header_ref} > {retrieved_docs[index_docs].metadata['header3']}"
+                        # ********* if there is header4 on metadata and set as next reference
+                        if ('header4' in retrieved_docs[index_docs].metadata) & (retrieved_docs[index_docs].metadata['header4'] != None):
+                            header_ref = f"{header_ref} > {retrieved_docs[index_docs].metadata['header4']}"
+                        header_ref += "\n"
+                        print(f"header chuhks :{header_ref}")
+
+                        # ********* calculate time for cosine_similarity check
+                        end_time_check_similarity = time.time()
+                        elapsed_time_check_similarity = end_time_check_similarity - start_time_check_similarity
+                        print(f"Elapsed Time Check Similarity: {elapsed_time_check_similarity} seconds")
+                
+            # ********* add all header_reference and removing the duplicated reference
+            unique_lines = set(header_ref.split('\n'))
+            header_ref = '\n'.join(unique_lines)
             header_ref_array.append(header_ref)
+            # ********* end of add all header_reference and removing the duplicated reference
             print('HEADER REF ARRAY: ', header_ref_array)
-            # message += "\nYou can see more detail explanation in the document at:\n" + header_ref + "\n"
-            print(f"{'REFERENCE: ', chunks_content}")
             print('')
             print('-' * 250)
-            print(message)
+                # ********* Add current question and answer into chat history, also header reference but null
+            chat_history.extend([HumanMessage(content=question), AIMessage(content=message)])
 
-            # Check if topic already exist and create summary as Topic
-            if (topics == ''):
-                print(f"no topics")
-                topics, topic_out, topic_in = topic_creation(chat_history)
-                print(f'top in: {topic_in}')
-                print(f'top out: {topic_out}')
+                # Chek if topic already exist and create summary as Topic
+        print(f'history: {chat_history}')
+        if (topics == ''):
+            print(f"no topics")
+            topics = topic_creation(chat_history)
+        print(cb)
 
-        else:
-            print(f"{'REFERENCE: ', chunks_content}")
-            print(f"Sorry but I have no knowledge to your question")
-            message = "Sorry but I have no knowledge to your question"
-            chat_history.extend([HumanMessage(content=question), AIMessage(content=result['answer'])])
-            header_ref_array.append('')
-            # Check if topic already exist and create summary as Topic
-            if (topics == ''):
-                print(f"no topics")
-                temp_history = [HumanMessage(content=question), AIMessage(content=message)]
-                topics, topic_out, topic_in = topic_creation(temp_history)
-    output_token_cb = cost_ask.completion_tokens
-    input_token_cb = cost_ask.prompt_tokens
-    print(f'cb in: {input_token_cb}')
-    print(f'cb out: {output_token_cb}')
-    print(f'request: {cost_ask.successful_requests}')
-    print(f'insert-an: ')
-    print([HumanMessage(content=question), AIMessage(content=result['answer'])])
-    # Add current question and answer into chat history
-    # *******************RESPONSE
-    print(f"message: {message}")
+    print(f"ai answ : {ai_msg}")
     print(f"history: {chat_history}")
     print(f"topics: {topics}")
-    print(f"tokens_embbed: {tokens_embbed}")
-    # *******************RESPONSE
-    print(f"tokens usage: {cost_ask.total_tokens}")
+    tokens_out = cb.completion_tokens
+    tokens_in = cb.prompt_tokens
+    tokens_embbed = 50
 
     memory.clear()
-    return message, chat_history, topics, output_token_cb, input_token_cb, tokens_embbed, header_ref_array
-
+    return message, chat_history, topics, tokens_out, tokens_in, tokens_embbed, header_ref_array
 
 def main():
     chat_history = []
     topic = ""
-    ask_with_memory("what is this document about?", '65bcdc83def141632c3fba7d', chat_history, topic)
-    # ask_with_memory('tell me more about it', 'emarketing_textbook_download_chunk_separator', chat_history, topic)
-
+    ask_with_memory("what is customer service?", '001', chat_history, topic)
 
 if __name__ == "__main__":
     main()
-
-#     """{
-#     "question": "tell me about fact in software",
-#     "source": "777",
-#     "chat_history":[
-#         {
-#             "content": "what this document about?",
-#             "type": "human"
-#         },
-#         {
-#             "content": "The document is about a book that presents the Python language in a linear fashion. It provides an overview of Python and its major language features, such as types and operations. The book also includes exercises, quizzes, and summaries to help readers review and test their understanding of the material. The document mentions that the third edition of the book reflects the changes in Python 2.5 and incorporates structural changes.",
-#             "type": "ai"
-#         }
-#     ],
-#     "topic": "This document is written by Robert L. Glass"
-# }"""
-
