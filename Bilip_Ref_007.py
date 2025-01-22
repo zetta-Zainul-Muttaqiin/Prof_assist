@@ -14,7 +14,6 @@ from langchain_core.documents               import Document
 from langchain_core.runnables               import Runnable
 from langchain_core.output_parsers          import StrOutputParser
 from langchain_community.callbacks          import get_openai_callback
-from langchain.retrievers.multi_query       import MultiQueryRetriever
 from langchain.chains.combine_documents     import create_stuff_documents_chain
 
 from setup import LOGGER, GREETINGS_EN, GREETINGS_FR
@@ -32,13 +31,6 @@ from validator.data_type_validatation       import (
                                                 validate_list_input,
                                                 validate_string_input,
                                             )
-
-from langchain_core.runnables import RunnablePassthrough
-
-
-def parse_retriever_input(params: dict):
-    return params["messages"][-1].content
-
 
 # *************** Function helper for help engine to convert chat history to chat messages
 def convert_chat_history(chat_history: list) -> list:
@@ -80,7 +72,7 @@ def detect_greetings(text):
     print(f'lang: {lang}')
     # ********* word_tokenize into english if question is french
     words = text.lower().split(' ')
-    greetings = GREETINGS_EN
+    greetings = GREETINGS_EN + GREETINGS_FR
     # ********* check each word
     for word in words:
         # ********* True if find greetings word from question input
