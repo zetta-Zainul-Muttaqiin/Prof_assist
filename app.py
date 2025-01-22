@@ -182,4 +182,4 @@ def refresh_quiz():
         return jsonify({"error": str(error)}), 500
     
 if __name__ == "__main__":
-    app.run(host='192.168.1.19', port=9874)
+    app.run(host='192.168.1.14', port=9874)

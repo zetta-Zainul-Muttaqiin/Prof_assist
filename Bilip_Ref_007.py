@@ -24,6 +24,8 @@ from setup import vstore
 
 load_dotenv()
 app_akadbot = Flask(__name__)
+
+
 with app_akadbot.app_context():
     def set_retrieved_docs_akadbot(docs):
         g.retrieved_docs_akadbot = docs
@@ -35,7 +37,7 @@ with app_akadbot.app_context():
 openai_api_key = os.getenv("OPENAI_API_KEY")
 os.environ["OPENAI_API_KEY"] = openai_api_key
 
-nltk.download("punkt")
+# nltk.download("punkt")
 nlp = spacy.load("en_core_web_lg")
 greetings_en = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'hi, how is it going?', 'greetings!', 'how are you doing?', 'how do you do?', 'what`s up?']
 greetings_fr = ['bonjour', 'salut', 'coucou', 'bonsoir', 'bonjour à tous', 'comment allez-vous ce matin ?', 'bonne journée', 'bonne soirée', 'bonne nuit', 'À bientôt', 'À plus tard', 'À tout à lheure', 'À demain', 'Ça va?', 'enchanté']
@@ -355,6 +357,7 @@ def main():
     chat_history = []
     topic = ""
     ask_with_memory("what is customer service?", '001', chat_history, topic)
+    
 
 if __name__ == "__main__":
     main()
