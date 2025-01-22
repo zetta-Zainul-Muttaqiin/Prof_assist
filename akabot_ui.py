@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from Bilip_Ref_007 import ask_with_memory, app_akadbot
+from Bilip_Ref_007 import ask_with_memory
 import json
 import os
 from datetime import datetime
@@ -12,6 +12,54 @@ LIST_DOCS = [
     {"source": "002", "document_name": "Doc_B"},
     {"source": "003", "document_name": "Doc_C"}
 ]
+
+# ********** json list 
+
+# def initialize_db():
+#     """Initialize the database with default structure if it doesn't exist"""
+#     default_db = []  
+    
+#     if not os.path.exists(DB_FILE):
+#         with open(DB_FILE, 'w') as file:
+#             json.dump(default_db, file, indent=2)
+#     else:
+#         # Check if file is empty or invalid
+#         try:
+#             with open(DB_FILE, 'r') as file:
+#                 json.load(file)
+#         except json.JSONDecodeError:
+#             # If file is empty or invalid, write default structure
+#             with open(DB_FILE, 'w') as file:
+#                 json.dump(default_db, file, indent=2)
+
+# def load_chat_history():
+#     
+#     try:
+#         with open(DB_FILE, 'r') as file:
+#             return json.load(file)
+#     except (json.JSONDecodeError, FileNotFoundError):
+#         # If there's an error loading the file, initialize with empty list
+#         default_db = []
+#         with open(DB_FILE, 'w') as file:
+#             json.dump(default_db, file, indent=2)
+#         return default_db
+
+# def save_chat_history(topics_list):
+#   
+#     try:
+#         with open(DB_FILE, 'w') as file:
+#             json.dump(topics_list, file, indent=2)
+#     except Exception as e:
+#         st.error(f"Error saving chat history: {str(e)}")
+
+# def get_topic_by_name(topics_list, topic_name):
+# 
+#     for topic in topics_list:
+#         if topic["topic"] == topic_name:
+#             return topic
+#     return None
+
+# ********** dict 
 
 def initialize_db():
     """Initialize the database with default structure if it doesn't exist"""
@@ -117,8 +165,7 @@ def plot_title():
     return gradient_text_html
 
 def process_query_with_context(prompt, source, chat_history, current_topic):
-    with app_akadbot.app_context():
-        return ask_with_memory(
+    return ask_with_memory(
             prompt,
             source,
             chat_history,
@@ -129,7 +176,7 @@ def format_topic_name(topic, db_data):
     """Format topic name with creation date if available"""
     if topic in db_data['topics']:
         created_at = datetime.fromisoformat(db_data['topics'][topic]['created_at'])
-        return f"{topic} ({created_at.strftime('%Y-%m-%d %H:%M')})"
+        return f"{topic}"
     return topic
 
 def clear_current_chat(db_data):
@@ -137,7 +184,7 @@ def clear_current_chat(db_data):
         # Generate a new topic name for the fresh chat
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # static topic name
-    new_topic = f"New Chat_{timestamp}"
+    new_topic = f"New Chat"
         
         # Store the current messages in history if there are any
     if st.session_state.current_topic and st.session_state.messages:
@@ -330,7 +377,7 @@ def akabot_ui2():
                                 "header_ref": msg_header_ref
                             })
                         
-                        message, chat_history, topics, tokens_out, tokens_in, tokens_embbed, header_ref_array = process_query_with_context(
+                        message, chat_history, topics, _, _, header_ref_array = process_query_with_context(
                             prompt,
                             source,
                             formatted_chat_history,
