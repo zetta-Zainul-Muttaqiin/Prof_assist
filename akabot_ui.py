@@ -313,7 +313,7 @@ def akabot_ui2():
                     if 'message' in topic_data:
                         st.session_state.messages = topic_data['message']  
                     elif 'messages' in topic_data:
-                        st.session_state.messages = topic_data['message']  
+                        st.session_state.messages = topic_data['messages']  
                     else:
                         st.session_state.messages = []  
                     
@@ -334,24 +334,38 @@ def akabot_ui2():
             
     # Main chat interface
     source = get_source_by_name(selected_doc)
-    st.write(st.session_state.messages)
+    # st.write(st.session_state.messages)
+    
     # Chat container
     with st.container(border=True, height=370):
         for message in st.session_state.messages:
-                st.write(message)
+            if isinstance(message, dict) and "type" in message and "content" in message:
                 with st.chat_message(message["type"]):
                     st.markdown(message["content"])
                     if message["type"] == "ai" and "header_ref" in message and message["header_ref"]:
-                       st.markdown(
+                        st.markdown(
                             f"""
                             <p style="color: gray; font-size: 12px;">
                                 References: {message['header_ref'].replace("- ", "<br>-")}
                             </p>
-                            """, 
+                            """,
                             unsafe_allow_html=True
                         )
+            elif isinstance(message, list): 
+                for sub_message in message:  
+                    if isinstance(sub_message, dict) and "type" in sub_message and "content" in sub_message:
+                        with st.chat_message(sub_message["type"]):
+                            st.markdown(sub_message["content"])
+                            if sub_message["type"] == "ai" and "header_ref" in sub_message and sub_message["header_ref"]:
+                                st.markdown(
+                                    f"""
+                                    <p style="color: gray; font-size: 12px;">
+                                        References: {sub_message['header_ref'].replace("- ", "<br>-")}
+                                    </p>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
 
-        
         # Chat input
     with st.container():
             if prompt := st.chat_input("What would you like to know?"):
