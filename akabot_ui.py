@@ -18,6 +18,8 @@ st.markdown("""
         </style>
         """, unsafe_allow_html=True)
 
+st.set_page_config(layout="wide")
+
 DB_FILE = 'DB_FILE.json'
 LIST_DOCS = [
  {'course_id': 'doc_1_charte', 'course_name': 'Charte du Centre Partenaire'},
@@ -242,7 +244,7 @@ def akabot_ui2():
                     margin: 0;
                     text-transform: uppercase;
                     letter-spacing: 1.2px;
-                ">Choose Doc</h3>
+                ">Select Document</h3>
             </div>
         """, unsafe_allow_html=True)
          
