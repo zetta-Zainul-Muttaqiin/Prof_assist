@@ -51,7 +51,7 @@ def tokens_semantic_chunker(data):
     # split document based on '.', '?', or '!'
     single_sentences_list = re.split(r'(?<=[.?!])\s+', data)
     sentences = [{'sentence':x, 'index':i} for i, x in enumerate(single_sentences_list)]
-    buffer_size = 1
+    buffer_size = 1 
     #*************** combining sentences in triplet
     for sentence in range(len(sentences)):
         combined_sentence = ''

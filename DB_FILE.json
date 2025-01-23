@@ -1,35 +1,34 @@
-{
-  "topics": {
-    "<b>Understanding LangChain: A Dive into Language Models and Their Applications</b>": {
-      "messages": [
-        {
-          "type": "human",
-          "content": "what is langchain"
-        },
-        {
-          "type": "ai",
-          "content": "LangChain is a framework that integrates Large Language Models (LLMs) to enhance customer service by creating efficient, personalized, and responsive interactions. It is utilized in the automation of customer service, allowing organizations to provide context-aware support and address a wide array of customer inquiries effectively.",
-          "header_ref": "\n - Customer Service > Automating Customer Service using LangChain  > Building custom open-source GPT Chatbot for organizations "
-        }
-      ],
-      "created_at": "2025-01-22T16:56:16.855168",
-      "document": "AI_book"
-    },
-    "New Chat": {
-      "messages": [
-        {
-          "type": "human",
-          "content": "what is langchain in customer service"
-        },
-        {
-          "type": "ai",
-          "content": "LangChain is a framework that integrates Large Language Models (LLMs) to enhance customer service by facilitating efficient, personalized, and responsive interactions. It allows organizations to automate customer service, moving away from traditional support techniques like FAQs, and enables context-aware and tailored customer interactions. LangChain can be fine-tuned over custom knowledge of products or services, effectively addressing a wide array of customer inquiries and issues.",
-          "header_ref": "\n - Customer Service > Automating Customer Service using LangChain  > Building custom open-source GPT Chatbot for organizations "
-        }
-      ],
-      "created_at": "2025-01-22T16:56:31.532004",
-      "document": ""
-    }
+[
+  {
+    "topic": "<b>Discussion on Admtc: Exploring Concepts and Applications</b>",
+    "message": [
+      {
+        "type": "human",
+        "content": "admtc"
+      },
+      {
+        "type": "ai",
+        "content": "The context mentions \"ADMTC\" as an agency that acts as a service provider for educational services, representing the certifying organization at the national level for all partner centers. ADMTC is responsible for supporting partner centers in implementing training for certification, coordinating the organization of assessments, and ensuring compliance with certification rules. The platform \"admtc.pro\" is also highlighted as a resource for accessing necessary materials for the certification training.",
+        "header_ref": "\n - ADMTC_1 > CHARTE DU CENTRE PARTENAIRE  > ENQUETE D\u2019EMPLOYABILITE \n - ADMTC_1 > CHARTE DU CENTRE PARTENAIRE  > LE CENTRE PARTENAIRE ET SON REFERENT \n - ADMTC_1 > CHARTE DU CENTRE PARTENAIRE  > SOMMAIRE \n - ADMTC_1 > CHARTE DU CENTRE PARTENAIRE  > EVOLUTION ET FORME DES CONTROLES QUALITE \n - ADMTC_1 > CHARTE DU CENTRE PARTENAIRE  > LA PLATEFORME ADMTC.PRO "
+      }
+    ],
+    "created_at": "2025-01-23T14:36:47.991160",
+    "document": "Charte du Centre Partenaire"
   },
-  "current_topic": "New Chat"
-}
+  {
+    "topic": "<b>Understanding Certification: An Overview of Its Role and Importance</b>",
+    "message": [
+      {
+        "type": "human",
+        "content": "what is certification here?"
+      },
+      {
+        "type": "ai",
+        "content": "La certification mentionn\u00e9e ici est la certification professionnelle \u00ab Manager du D\u00e9veloppement Commercial \u00bb (MDC). Elle est d\u00e9livr\u00e9e par un organisme certificateur et atteste que le candidat a valid\u00e9 tous les blocs de comp\u00e9tences requis pour cette certification.",
+        "header_ref": "\n - ADMTC > 4. INSCRIPTION A LA FORMATION CERTIFIANTE \n - ADMTC > I. LES ACTEURS ET LEURS ROLES 1. LE CENTRE DE FORMATION \n - ADMTC > 2. PREREQUIS POUR INTEGRER LA FORMATION CERTIFIANTE \n - ADMTC > 3. JURY NATIONAL DE CERTIFICATION \n - ADMTC > 8. ENQUETE D\u2019EMPLOYABILITE "
+      }
+    ],
+    "created_at": "2025-01-23T14:37:10.960516",
+    "document": "Reglement de la certification"
+  }
+]

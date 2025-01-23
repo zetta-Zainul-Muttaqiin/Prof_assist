@@ -1,113 +1,77 @@
-import streamlit as st
-from streamlit_option_menu import option_menu
-from Bilip_Ref_007 import ask_with_memory
+# *********** import libraries
+import streamlit            as st
+from streamlit_option_menu  import option_menu
+from Bilip_Ref_007          import ask_with_memory
 import json
 import os
-from datetime import datetime
-from typing import Optional
+from datetime               import datetime
+
+# padding height
+st.markdown("""
+        <style>
+               .block-container {
+                    padding-top: 1rem;
+                    padding-bottom: 0rem;
+                    padding-left: 5rem;
+                    padding-right: 5rem;
+                }
+        </style>
+        """, unsafe_allow_html=True)
 
 DB_FILE = 'DB_FILE.json'
 LIST_DOCS = [
-    {"source":"ai_doc_001","document_name":"AI_book"},
-    {"source": "002", "document_name": "Doc_B"},
-    {"source": "003", "document_name": "Doc_C"}
+ {'course_id': 'doc_1_charte', 'course_name': 'Charte du Centre Partenaire'},
+ {'course_id': 'doc_2_regle', 'course_name': 'Reglement de la certification'},
+ {'course_id': 'ai_doc_001', 'course_name': 'AI_book'},
+ {'course_id': 'ai_doc--1', 'course_name': 'Artificial Intelligence and the Future of Teaching and Learning'}
 ]
 
-# ********** json list 
-
-# def initialize_db():
-#     """Initialize the database with default structure if it doesn't exist"""
-#     default_db = []  
-    
-#     if not os.path.exists(DB_FILE):
-#         with open(DB_FILE, 'w') as file:
-#             json.dump(default_db, file, indent=2)
-#     else:
-#         # Check if file is empty or invalid
-#         try:
-#             with open(DB_FILE, 'r') as file:
-#                 json.load(file)
-#         except json.JSONDecodeError:
-#             # If file is empty or invalid, write default structure
-#             with open(DB_FILE, 'w') as file:
-#                 json.dump(default_db, file, indent=2)
-
-# def load_chat_history():
-#     
-#     try:
-#         with open(DB_FILE, 'r') as file:
-#             return json.load(file)
-#     except (json.JSONDecodeError, FileNotFoundError):
-#         # If there's an error loading the file, initialize with empty list
-#         default_db = []
-#         with open(DB_FILE, 'w') as file:
-#             json.dump(default_db, file, indent=2)
-#         return default_db
-
-# def save_chat_history(topics_list):
-#   
-#     try:
-#         with open(DB_FILE, 'w') as file:
-#             json.dump(topics_list, file, indent=2)
-#     except Exception as e:
-#         st.error(f"Error saving chat history: {str(e)}")
-
-# def get_topic_by_name(topics_list, topic_name):
-# 
-#     for topic in topics_list:
-#         if topic["topic"] == topic_name:
-#             return topic
-#     return None
-
-# ********** dict 
-
+# ********** initiate json list dict
 def initialize_db():
-    """Initialize the database with default structure if it doesn't exist"""
-    default_db = {
-        'topics': {},
-        'current_topic': ''
-    }
+    default_db = [
+        {
+            "topic": "New Chat",
+            "message": [],
+            "created_at": "",
+            "document": ""
+        }
+    ]
     
     if not os.path.exists(DB_FILE):
         with open(DB_FILE, 'w') as file:
             json.dump(default_db, file, indent=2)
     else:
-        # Check if file is empty or invalid
+        # ********** Check if file is empty or invalid
         try:
             with open(DB_FILE, 'r') as file:
                 json.load(file)
         except json.JSONDecodeError:
-            # If file is empty or invalid, write default structure
+            # ********** If file is empty or invalid, write default structure
             with open(DB_FILE, 'w') as file:
                 json.dump(default_db, file, indent=2)
 
 def load_chat_history():
-    """Load chat history from JSON file with error handling"""
     try:
         with open(DB_FILE, 'r') as file:
             return json.load(file)
     except (json.JSONDecodeError, FileNotFoundError):
-        # If there's an error loading the file, initialize with default structure
-        default_db = {
-            'topics': {},
-            'current_topic': ''
-        }
+        # If there's an error loading the file, initialize with empty list
+        default_db = []
         with open(DB_FILE, 'w') as file:
             json.dump(default_db, file, indent=2)
         return default_db
 
-def save_chat_history(db_data):
-    """Save chat history to JSON file with error handling"""
+def save_chat_history(topics_list):
     try:
         with open(DB_FILE, 'w') as file:
-            json.dump(db_data, file, indent=2)
+            json.dump(topics_list, file, indent=2)
     except Exception as e:
         st.error(f"Error saving chat history: {str(e)}")
 
 def get_source_by_name(doc_name):
     for doc in LIST_DOCS:
-        if doc["document_name"] == doc_name:
-            return doc["source"]
+        if doc["course_name"] == doc_name:
+            return doc["course_id"]
     return None
 
 def styling():
@@ -132,7 +96,7 @@ def styling():
     .stSelectbox div[data-baseweb="select"] {
         background-color: #ffffff;       /* White background */
         color: #000000;                  /* Black text color */
-        padding: 10px 15px;              /* Padding for a spacious look */
+        padding: 5px 6px;              /* Padding for a spacious look */
         font-size: 16px;                 /* Font size */
         border: 1px solid #000000;       /* Thin black border */
         border-radius: 7px;              /* Rounded corners for a smooth look */
@@ -172,68 +136,84 @@ def process_query_with_context(prompt, source, chat_history, current_topic):
             current_topic
         )
     
-def format_topic_name(topic, db_data):
-    """Format topic name with creation date if available"""
-    if topic in db_data['topics']:
-        created_at = datetime.fromisoformat(db_data['topics'][topic]['created_at'])
-        return f"{topic}"
-    return topic
+def format_topic_name(topic):
+    topic_name = topic.get('topic', 'Unnamed Topic').replace("<b>", "").replace("</b>", "")
+    created_at = topic.get('created_at', '')
+    
+    if created_at:
+        return f"{topic_name}"
+    return topic_name
+
 
 def clear_current_chat(db_data):
-    # try:
-        # Generate a new topic name for the fresh chat
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # static topic name
-    new_topic = f"New Chat"
-        
-        # Store the current messages in history if there are any
-    if st.session_state.current_topic and st.session_state.messages:
-            old_topic = st.session_state.current_topic
-            if old_topic in db_data['topics']:
-                db_data['topics'][old_topic]['messages'] = st.session_state.messages
-        
-        # Reset current chat
+    new_topic = f"New Chat_{timestamp}"
+
+    # DEBUG
+    # print("\n=== Debug Start ===")
+    # print("Initial Messages:", st.session_state.get("messages", []))
+    # print("Initial DB Data:", db_data)
+    # print("New Topic:", new_topic)
+
+    # Save current messages into history if not already saved
+    if st.session_state.get("messages", []):
+        current_topic = st.session_state.get("current_topic", "")
+        if current_topic.startswith("New Chat_") or len(st.session_state["messages"]) == 0:
+            print("New Chat topic is empty and will not be saved.")
+        elif any(entry["topic"] == current_topic for entry in db_data):
+            print("Current topic already saved in DB, skipping save.")
+        else:
+            db_data.append({
+                "topic": current_topic,
+                "messages": st.session_state["messages"],
+                "created_at": datetime.now().isoformat(),
+                "document": st.session_state.get("selected_doc", ""),
+            })
+            print("Saved current topic to DB.")
+
+    # Reset session state for new chat
     st.session_state.messages = []
     st.session_state.chat_history = []
-        
-        # Update current topic to the new one
     st.session_state.current_topic = new_topic
-    db_data['current_topic'] = new_topic
-        
-        # Initialize new topic in database
-    if new_topic not in db_data['topics']:
-            db_data['topics'][new_topic] = {
-                'messages': [],
-                'created_at': datetime.now().isoformat(),
-                'document': st.session_state.get('selected_doc', '')  # Store current document
-            }
 
-        # Save changes to database
+    # Avoid duplicate new topics in db_data
+    existing_topics = [entry["topic"] for entry in db_data]
+    if new_topic not in existing_topics:
+        db_data.append({
+            "topic": new_topic,
+            "messages": [],
+            "created_at": datetime.now().isoformat(),
+            "document": st.session_state.get("selected_doc", ""),
+        })
+        print(f"Added new topic: {new_topic}")
+    else:
+        print(f"Topic {new_topic} already exists in DB.")
+
+    # DEBUG: Log updated states
+    # print("Updated Messages:", st.session_state.get("messages", []))
+    # print("Updated DB Data:", db_data)
+    # print("=== Debug End ===\n")
+
+    # Save changes to database
     save_chat_history(db_data)
-        
-    st.sidebar.success("Started a new chat while preserving history!")
-    
-    st.rerun()
-        
-    # except Exception as e:
-    #     st.sidebar.error(f"Error starting new chat: {str(e)}")
-    #     print(f"Error details: {str(e)}")
 
+    st.sidebar.success("Started a new chat while preserving history!")
+    st.rerun()
 
 def akabot_ui2():
-    # Initialize database
+    # ********** initiate db
     initialize_db()
-    # styling
+    # ********** styling
     styling()
     # Load existing chat history
     db_data = load_chat_history()
-    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # Initialize session states with proper message structure
     if 'messages' not in st.session_state:
         st.session_state.messages = []
     
     if 'current_topic' not in st.session_state:
-        st.session_state.current_topic = db_data.get('current_topic', '')
+        st.session_state.current_topic = f"New Chat_{timestamp}"
     
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
@@ -245,21 +225,21 @@ def akabot_ui2():
     
     # Sidebar with topic navigation
     with st.sidebar:
-        for _ in range(4):
+        for _ in range(1):
             st.write("")
             
         st.markdown("""
             <div style="
                 background-color: #ffffff;
                 border-radius: 5px;
-                padding: 5px;
-                margin-bottom: 10px;
+                padding: 3px;
+                margin-bottom: 3px;
                 text-align: center;
                 box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.15);
             ">
                 <h3 style="
                     color: #333333;
-                    font-size: 20px;
+                    font-size: 12px;
                     font-weight: bold;
                     margin: 0;
                     text-transform: uppercase;
@@ -270,25 +250,25 @@ def akabot_ui2():
          
         selected_doc = st.selectbox(
             "",
-            options=[doc["document_name"] for doc in LIST_DOCS],
+            options=[doc["course_name"] for doc in LIST_DOCS],
             index=0
         )
         
-        for _ in range(4):
+        for _ in range(1):
             st.write("")
         
         st.markdown("""
             <div style="
                 background-color: #ffffff;
                 border-radius: 5px;
-                padding: 5px;
-                margin-bottom: 10px;
+                padding: 3px;
+                margin-bottom: 3px;
                 text-align: center;
                 box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.15);
             ">
                 <h3 style="
                     color: #333333;
-                    font-size: 20px;
+                    font-size: 12px;
                     font-weight: bold;
                     margin: 0;
                     text-transform: uppercase;
@@ -297,13 +277,13 @@ def akabot_ui2():
             </div>
         """, unsafe_allow_html=True)
 
-        topics = list(db_data['topics'].keys())
-        topics.sort(key=lambda x: db_data['topics'][x]['created_at'], reverse=True)
-        
+        topics = sorted(db_data, key=lambda x: x.get('created_at', ''), reverse=True)
+
+        #print(f"\n\n Topics: {topics}")
         if topics:
             selected_topic = option_menu(
                 menu_title="",
-                options=[format_topic_name(topic, db_data) for topic in topics],
+                options=[format_topic_name(topic) for topic in topics],
                 icons=["chat-dots"] * len(topics),
                 menu_icon=None,
                 default_index=0 if topics else None,
@@ -313,13 +293,33 @@ def akabot_ui2():
                 }
             )
             
-            # Extract the base topic name (without timestamp)
-            selected_base_topic = selected_topic.split(" (")[0] if selected_topic else None
-            
+            selected_base_topic = selected_topic #.split(" (")[0] if selected_topic else None
+            print(f"\n\n selected: {selected_base_topic}")
             if selected_base_topic:
-                st.session_state.messages = db_data['topics'][selected_base_topic]['messages']
-                st.session_state.current_topic = selected_base_topic
+                normalized_db_data = [
+                    {
+                        **item,
+                        "normalized_topic": item["topic"].replace("<b>", "").replace("</b>", "")
+                    }
+                    for item in db_data
+                ]
                 
+                topic_data = next(
+                    (item for item in normalized_db_data if item['normalized_topic'] == selected_base_topic), 
+                    None
+                )
+                print(f"\n\n topic data: {topic_data}")
+                            
+                if topic_data:
+                    # Check if the key is 'message' or 'messages' 
+                    if 'message' in topic_data:
+                        st.session_state.messages = topic_data['message']  
+                    else:
+                        st.session_state.messages = []  
+                    
+                    # Update current topic
+                    st.session_state.current_topic = topic_data['topic']
+
             clear_button = st.button("Start New Chat", key="clear_button") 
             if clear_button:
                 clear_current_chat(db_data)
@@ -328,24 +328,29 @@ def akabot_ui2():
             st.markdown("""
                 <div style="margin: 10px 0; border-bottom: 1px solid #ccc;"></div>
                 <div style="font-size: 0.8em; color: #666;">
-                    Click 'Start New Chat' to begin a fresh conversation.
+                    Click 'Start New Chat' to begin a new topic doc.
                 </div>
             """, unsafe_allow_html=True)
             
-
     # Main chat interface
     source = get_source_by_name(selected_doc)
     
     # Chat container
-    with st.container(border=True, height=550):
+    with st.container(border=True, height=370):
         
-        # Display chat messages
-        with st.container(border=False, height=500):
-            for message in st.session_state.messages:
+        for message in st.session_state.messages:
                 with st.chat_message(message["type"]):
                     st.markdown(message["content"])
                     if message["type"] == "ai" and "header_ref" in message and message["header_ref"]:
-                        st.markdown(f"*References:* {message['header_ref']}", unsafe_allow_html=True)
+                       st.markdown(
+                            f"""
+                            <p style="color: gray; font-size: 12px;">
+                                References: {message['header_ref'].replace("- ", "<br>-")}
+                            </p>
+                            """, 
+                            unsafe_allow_html=True
+                        )
+
         
         # Chat input
     with st.container():
@@ -355,8 +360,6 @@ def akabot_ui2():
                 
                 # Process RAG
                 with st.spinner("Thinking..."):
-                    # try:
-                        # Convert session chat history to the format expected by process_query_with_context
                         formatted_chat_history = []
                         for msg in st.session_state.chat_history:
                             # Check if msg is a Message object or dictionary
@@ -377,16 +380,17 @@ def akabot_ui2():
                                 "header_ref": msg_header_ref
                             })
                         
-                        message, chat_history, topics, _, _, header_ref_array = process_query_with_context(
+                        message, chat_history, topics, _, _ = process_query_with_context(
                             prompt,
                             source,
                             formatted_chat_history,
-                            st.session_state.current_topic
+                            "" if st.session_state.current_topic.startswith("New Chat") else st.session_state.current_topic
                         )
-                        print(f"\n\n Topic: {topics}")
+                        # print(f"\n\n Topic: {topics}")
                         # Update session states
                         # Convert returned chat history to dictionary format
                         formatted_returned_history = []
+                        header_ref_extracted = ""
                         for msg in chat_history:
                             # message object
                             if hasattr(msg, 'type'):  
@@ -396,6 +400,7 @@ def akabot_ui2():
                                 }
                                 if msg.type == "ai":
                                     msg_dict["header_ref"] = getattr(msg, 'header_ref', '')
+                                    header_ref_extracted = getattr(msg, 'header_ref', '')
                                 formatted_returned_history.append(msg_dict)
                             # already dict
                             else:  
@@ -408,28 +413,37 @@ def akabot_ui2():
                         ai_message = {
                             "type": "ai",
                             "content": message,
-                            "header_ref": header_ref_array[-1] if header_ref_array else ""
+                            "header_ref": st.session_state.chat_history[-1].get("header_ref", header_ref_extracted)
                         }
                         st.session_state.messages.append(ai_message)
                         
                         # Update database
-                        if topics:  # Only save if we have a topic
-                            if topics not in db_data['topics']:
-                                db_data['topics'][topics] = {
-                                    'messages': [],
-                                    'created_at': datetime.now().isoformat(),
-                                    'document': selected_doc
-                                }
-                            db_data['topics'][topics]['messages'] = st.session_state.messages
-                            db_data['current_topic'] = topics
+                        if topics:  
+                            db_data = [entry for entry in db_data if not entry["topic"].startswith("New Chat")]
+                            topic_found = False 
+                            
+                            for entry in db_data:
+                                if entry["topic"] == topics:
+                                    # Update the existing topic
+                                    entry["message"] = st.session_state.messages,
+                                    entry["created_at"] = datetime.now().isoformat()
+                                    entry["document"] = selected_doc
+                                    topic_found = True
+                                    break
+                            
+                            # If the topic was not found, create a new entry
+                            if not topic_found:
+                                db_data.append({
+                                    "topic": topics,
+                                    "message": st.session_state.messages,
+                                    "created_at": datetime.now().isoformat(),
+                                    "document": selected_doc
+                                })
                             save_chat_history(db_data)
-                        
-                        # Force a rerun to update the UI
+                            
                         st.rerun()
                         
-                    # except Exception as e:
-                    #     st.error(f"An error occurred: {str(e)}")
-                    #     print(f"Error details: {str(e)}")  # For debugging purposes
                 
 if __name__ == '__main__':
     akabot_ui2()
+    # st.write(st.session_state)
