@@ -9,7 +9,7 @@ from langchain.prompts                      import (
                                                 MessagesPlaceholder, 
                                                 ChatPromptTemplate
                                             )
-from langchain_core.messages                import HumanMessage, AIMessage
+from langchain_core.messages                import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents               import Document
 from langchain_core.runnables               import Runnable
 from langchain_core.output_parsers          import StrOutputParser
@@ -20,10 +20,10 @@ from setup import LOGGER, GREETINGS_EN, GREETINGS_FR
 
 # *************** IMPORTS MODELS ***************
 from models.llms                            import LLMModels
-from models.lingua                          import LinguaModel
 
 # *************** IMPORTS HELPERS ***************
 from helpers.astradb_connect_helper         import get_vector_collection
+from helpers.language_helper                import get_language_used
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.data_type_validatation       import (
@@ -33,7 +33,7 @@ from validator.data_type_validatation       import (
                                             )
 
 # *************** Function helper for help engine to convert chat history to chat messages
-def convert_chat_history(chat_history: list) -> list:
+def convert_chat_history(chat_history: list) -> list[BaseMessage]:
     """
     Convert chat history to the chat messages for inputted to LLM.
 
@@ -68,8 +68,6 @@ def convert_chat_history(chat_history: list) -> list:
 
 def detect_greetings(text):
     # ********* detect question input
-    lang = LinguaModel().lingua.detect_language_of(text)
-    print(f'lang: {lang}')
     # ********* word_tokenize into english if question is french
     words = text.lower().split(' ')
     greetings = GREETINGS_EN + GREETINGS_FR
@@ -78,6 +76,7 @@ def detect_greetings(text):
         # ********* True if find greetings word from question input
         if word in greetings:
             return True
+    
     return False
 
 def topic_creation(chat_history):
@@ -87,9 +86,8 @@ def topic_creation(chat_history):
         'chat_history':{chat}
     
     Instructions:
-        Create a topic title about what the conversation is about based on the 'chat_history'.
-
-        Concern to the title language and tone response should primarily follow the 'chat_history'.
+        1. Create a topic title about what the conversation is about based on the 'chat_history'.
+        2. Concern to the title language and tone response should primarily follow the 'chat_history'.
     
     Example Output (in HTML):
     ```html<b>Filtering Student Data for Efap Paris: Scholar Season 24-25 with Payment Confirmation</b>```
@@ -125,14 +123,15 @@ def topic_creation(chat_history):
     # ****** Return the cleaned topic title
     return clear_result
 
-def get_context_based(query: str, course_id: str) -> list[tuple[Document, float]]:
+def get_context_based_question(query: str, course_id: str) -> list[tuple[Document, float]]:
 
     vector_coll = get_vector_collection()
     
     relevant_docs_score = vector_coll.similarity_search_with_relevance_scores(
-        query=query, k=5, filter={'course_id': course_id}
+        query=query, k=5, filter={'course_id': course_id}, score_threshold=0.6
     )
     return relevant_docs_score
+
 
 def generate_akadbot_chain() -> Runnable:
     """
@@ -142,13 +141,14 @@ def generate_akadbot_chain() -> Runnable:
     # ********* set QA chain prompt for bot can understand context
     qa_system_prompt = """
     You are an expert of the document. Generate answer only based on the given context. Do not make up the answer.
+    If you don't know the answer basend on the given context, telling you can't answer question outside of this document.
     The context is '''{context}'''
+    Please generate answer in {language} language 
     """
     qa_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", qa_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}"),
+            MessagesPlaceholder(variable_name="messages"),
         ]
     )
 
@@ -158,13 +158,37 @@ def generate_akadbot_chain() -> Runnable:
         llm=LLMModels(temperature=0.2).llm_cv, prompt=qa_prompt, output_parser=StrOutputParser()
     )
 
-    LOGGER.info(ragChain.get_graph())
+    LOGGER.info("Akadbot Chain Generated")
 
     return ragChain
 
+def get_question_history(conversation: list[BaseMessage], latest_chat: int = 2) -> list[HumanMessage]:
+
+        length = -(latest_chat*2)
+        question = []
+        for chat in conversation[length:]:
+            if chat.type == 'human':
+                question.append(chat.content)
+        
+        return question
+
+
+def get_context_based_history(conversation: list[BaseMessage], course_id) -> list[tuple[Document, float]]:
+
+    conversation_question = get_question_history(conversation, 3)
+
+    context_history = []
+    for question in conversation_question:
+        question_context = get_context_based_question(question, course_id)
+        for context in question_context:
+            context_history.extend([context])
+
+    return context_history
+
+
 def ask_with_memory(question, course_id, chat_history=[], topic=''):
 
-    ragChain = generate_akadbot_chain()
+    lang_used = get_language_used(question)
     message = ''
     header_ref = ''
 
@@ -172,11 +196,11 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
         start_time = time.time()
         if detect_greetings(question.lower()):
             # ********* invoke answer for greetings
-            message = LLMModels(temperature=1.0, max_tokens=100).llm_cv.invoke(question)
+            llm = LLMModels(temperature=1.0, max_tokens=100).llm_cv
+            message = llm.invoke(f"{question}. Response with {lang_used} language")
             # ********* save as message response
             if not isinstance(message, str):
                 message = message.content
-            
 
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -189,9 +213,21 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
                 ]
             )
         else:
+            
+            ragChain = generate_akadbot_chain()
 
             history_input = convert_chat_history(chat_history)
-            context = get_context_based(question, course_id)
+            
+            history_input.extend([HumanMessage(content=question)])
+            print("MESSAGES :", history_input)
+
+            if chat_history:
+                context = get_context_based_history(history_input, course_id)
+            
+            else:
+                context = get_context_based_question(question, course_id)
+
+            LOGGER.info(f"CONTEXT: {len(context)}\n{context}")
 
             docs = []
             for doc in context:
@@ -201,8 +237,8 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
             message = ragChain.invoke(
                 {
                     "context": docs,
-                    "chat_history": history_input,
-                    "question": HumanMessage(content=question), 
+                    "messages": history_input, 
+                    "language": lang_used,
                 }
             )
             end_time = time.time()
@@ -261,7 +297,7 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
 def main():
     chat_history = []
     topic = ""
-    ask_with_memory("what is customer service?", 'ai_doc_001', chat_history, topic)
+    ask_with_memory("hi", 'ai_doc_001', chat_history, topic)
 
 if __name__ == "__main__":
     main()
