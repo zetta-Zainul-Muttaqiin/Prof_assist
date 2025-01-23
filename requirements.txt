@@ -16,10 +16,6 @@ cachetools==5.5.1
 cassandra-driver==3.29.2
 cassio==0.1.10
 catalogue==2.0.10
-certifi==2024.12.14
-cffi==1.17.1
-chardet==5.2.0
-charset-normalizer==3.4.1
 click==8.1.8
 cloudpathlib==0.20.0
 certifi==2024.12.14
@@ -190,7 +186,6 @@ pytest-cov==6.0.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 pytz==2024.2
-pywin32==308
 PyYAML==6.0.2
 referencing==0.36.1
 regex==2024.11.6
