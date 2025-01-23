@@ -128,7 +128,7 @@ def get_context_based_question(query: str, course_id: str) -> list[tuple[Documen
     vector_coll = get_vector_collection()
     
     relevant_docs_score = vector_coll.similarity_search_with_relevance_scores(
-        query=query, k=5, filter={'course_id': course_id}, score_threshold=0.6
+        query=query, k=4, filter={'course_id': course_id}, score_threshold=0.4
     )
     return relevant_docs_score
 
@@ -175,7 +175,7 @@ def get_question_history(conversation: list[BaseMessage], latest_chat: int = 2) 
 
 def get_context_based_history(conversation: list[BaseMessage], course_id) -> list[tuple[Document, float]]:
 
-    conversation_question = get_question_history(conversation, 3)
+    conversation_question = get_question_history(conversation)
 
     context_history = []
     for question in conversation_question:
@@ -247,23 +247,25 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
 
             # Get context reference
             for doc in context:
+
+                if doc[1] > 0.6:
                 
-                # ********* set first reference is document name
-                header_ref = f"{header_ref} - {doc[0].metadata['document_name']}"
-                # ********* if there is header1 on metadata and set as next reference
-                if ('header1' in doc[0].metadata) & (doc[0].metadata['header1'] != None):
-                    header_ref = f"{header_ref} > {doc[0].metadata['header1']}"
-                # ********* if there is header2 on metadata and set as next reference
-                if ('header2' in doc[0].metadata) & (doc[0].metadata['header2'] != None):
-                    header_ref = f"{header_ref} > {doc[0].metadata['header2']}"
-                # ********* if there is header3 on metadata and set as next reference
-                if ('header3' in doc[0].metadata) & (doc[0].metadata['header3'] != None):
-                    header_ref = f"{header_ref} > {doc[0].metadata['header3']}"
-                # ********* if there is header4 on metadata and set as next reference
-                if ('header4' in doc[0].metadata) & (doc[0].metadata['header4'] != None):
-                    header_ref = f"{header_ref} > {doc[0].metadata['header4']}"
-                header_ref += "\n"
-                print(f"header chuhks :{header_ref}")
+                    # ********* set first reference is document name
+                    header_ref = f"{header_ref} - {doc[0].metadata['document_name']}"
+                    # ********* if there is header1 on metadata and set as next reference
+                    if ('header1' in doc[0].metadata) & (doc[0].metadata['header1'] != None):
+                        header_ref = f"{header_ref} > {doc[0].metadata['header1']}"
+                    # ********* if there is header2 on metadata and set as next reference
+                    if ('header2' in doc[0].metadata) & (doc[0].metadata['header2'] != None):
+                        header_ref = f"{header_ref} > {doc[0].metadata['header2']}"
+                    # ********* if there is header3 on metadata and set as next reference
+                    if ('header3' in doc[0].metadata) & (doc[0].metadata['header3'] != None):
+                        header_ref = f"{header_ref} > {doc[0].metadata['header3']}"
+                    # ********* if there is header4 on metadata and set as next reference
+                    if ('header4' in doc[0].metadata) & (doc[0].metadata['header4'] != None):
+                        header_ref = f"{header_ref} > {doc[0].metadata['header4']}"
+                    header_ref += "\n"
+                    print(f"header chuhks :{header_ref}")
 
               
             # ********* add all header_reference and removing the duplicated reference
