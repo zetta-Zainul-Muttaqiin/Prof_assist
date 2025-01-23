@@ -1,10 +1,9 @@
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain_astradb.vectorstores import AstraDBVectorStore
 from astrapy.db import AstraDB
 import datetime
-from langchain.callbacks.manager import get_openai_callback
+from langchain_community.callbacks          import get_openai_callback
+
 from langchain.docstore.document import Document
 from werkzeug.local import Local
 import openai
@@ -13,11 +12,13 @@ import re
 import requests
 from dotenv import load_dotenv
 import os
-import logging
 import tiktoken
 import fitz
 
-from setup import logger
+from models.embeddings import EmbeddingsModels
+from helpers.astradb_connect_helper import get_vector_collection
+
+from setup import LOGGER
 
 load_dotenv()
 # *************** to save the result of token count for semantic chunking in non-shared global variable 
@@ -35,14 +36,11 @@ os.environ['OPENAI_API_KEY'] =  openai_api_key
 astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
 astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
 astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
-
-astradb_token_key_upload_doc = os.getenv("ASTRADB_TOKEN_KEY_UPLOAD_DOC")
-astradb_api_endpoint_upload_doc = os.getenv("ASTRADB_API_ENDPOINT_UPLOAD_DOC")
 astradb_collection_name_upload_doc = os.getenv("ASTRADB_COLLECTION_NAME_UPLOAD_DOC")
 
 url_webhook = os.getenv("URL_WEBHOOK")
 url_error_webhook = os.getenv("URL_WEBHOOK")
-encoding = tiktoken.encoding_for_model("text-embedding-ada-002")
+encoding = tiktoken.encoding_for_model("text-embedding-3-large")
 
 #*************** end of retrieve keys from env file and set it to env variable
 
@@ -138,9 +136,7 @@ def create_document_by_splitting(data):
   print("Chunking Process...")
   with get_openai_callback() as cb:
     text_splitter = SemanticChunker(
-        OpenAIEmbeddings(
-            model='text-embedding-3-large'
-        ), 
+        EmbeddingsModels().embedding_large_openai, 
         breakpoint_threshold_type="percentile", 
         breakpoint_threshold_amount=75
         )
@@ -204,21 +200,12 @@ def extract_headers(document):
 #*************** function to call webhook to BE once document processing is succcess
 def callWebhook(url, course, course_document_id, doc_tokens):
 
-    logging.basicConfig(
-        filename='error.log', # Set a file for save logger output 
-        level=logging.INFO, # Set the logging level
-        format='%(asctime)s [%(levelname)s] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    logger = logging.getLogger(__name__)
-
-    logger.info('Webhook called... Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
+    LOGGER.info('Webhook called... Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
 
     payload = {'course_id': course, 'document_id': course_document_id, 'tokens_embbed': doc_tokens}  # Replace with your JSON payload
 
     response = requests.post(url, json=payload)
-    logger.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
+    LOGGER.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
 
     #*************** Save webhook call record to AstraDB 
     status = 'Success Uploading'
@@ -238,21 +225,12 @@ def callWebhook(url, course, course_document_id, doc_tokens):
 #*************** function to call webhook to BE once document processing hits rate limit error  
 def callErrorWebhook(url_error, course, course_document_id, doc_tokens, error):
 
-    logging.basicConfig(
-        filename='error.log', # Set a file for save logger output 
-        level=logging.INFO, # Set the logging level
-        format='%(asctime)s [%(levelname)s] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    logger = logging.getLogger(__name__)
-
-    logger.info('Webhook called... Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
+    LOGGER.info('Webhook called... Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens)
 
     payload = {'course_id': course, 'document_id': course_document_id, 'tokens_embbed': doc_tokens, 'Error': error}  # Replace with your JSON payload
 
     response = requests.post(url_error, json=payload)
-    logger.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens, ' || Error Status: ', error)
+    LOGGER.info('Webhook response: ', response,'Course ID: ', course, ' || Document ID: ', course_document_id, ' || Tokens Embbed: ', doc_tokens, ' || Error Status: ', error)
 
     #*************** Save webhook call record to AstraDB 
     status = 'Failed Uploading'
@@ -271,18 +249,12 @@ def callErrorWebhook(url_error, course, course_document_id, doc_tokens, error):
 #*************** end of function to call webhook to BE once document processing hits rate limit error 
 
 #*************** main function to be called for processing document
-def callRequest(URL, course_id, file_name, course_document_id):
-    logging.basicConfig(
-        filename='error.log', # Set a file for save logger output 
-        level=logging.INFO, # Set the logging level
-        format='%(asctime)s [%(levelname)s] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger(__name__)
+def callRequest(URL: str, course_id: str, course_name:str,  doc_name: str, doc_id: str):
+
 
     pdf_page = load_doc(URL)
     if(pdf_page):
-        logger.info('Document downloaded... Course ID: ', course_id, ' || Document ID: ', course_document_id)
+        LOGGER.info('Document downloaded... Course ID: ', course_id, ' || Document ID: ', doc_id)
 
     pdf_page_parsed = parsing_pdf_html(pdf_page)
     removed_break = remove_break_add_whitespace(pdf_page_parsed)
@@ -301,18 +273,20 @@ def callRequest(URL, course_id, file_name, course_document_id):
                 resplit_doc.metadata['header2'] = doc.metadata['header2']
                 resplit_doc.metadata['header3'] = doc.metadata['header3']
                 resplit_doc.metadata['header4'] = doc.metadata['header4']
-                resplit_doc.metadata["source"] = f"{course_id}"
-                resplit_doc.metadata["document_name"] = f"{file_name}"
-                resplit_doc.metadata["document_id"] = f"{course_document_id}"
+                resplit_doc.metadata["course_id"] = f"{course_id}"
+                resplit_doc.metadata["course_name"] = f"{course_name}"
+                resplit_doc.metadata["document_name"] = f"{doc_name}"
+                resplit_doc.metadata["document_id"] = f"{doc_id}"
                 x = tokens_embbeding(doc.page_content)
                 resplit_doc.metadata["tokens_embbed"] = x
                 doc_tokens += x
             new_chunks.extend(resplit)
         #*************** end of Check if doc.page_content character count is more than 7000. If yes, resplit the chunk
         else:
-            doc.metadata["source"] = f"{course_id}"
-            doc.metadata["document_name"] = f"{file_name}"
-            doc.metadata["document_id"] = f"{course_document_id}"
+            doc.metadata["course_id"] = f"{course_id}"
+            doc.metadata["course_name"] = f"{course_name}"
+            doc.metadata["document_name"] = f"{doc_name}"
+            doc.metadata["document_id"] = f"{doc_id}"
             x = tokens_embbeding(doc.page_content)
             doc.metadata["tokens_embbed"] = x
             doc_tokens += x
@@ -327,11 +301,11 @@ def callRequest(URL, course_id, file_name, course_document_id):
     print(f"token usage : {doc_tokens}")
     if doc_tokens < 1000000:
         print("Embedding Process")
-        Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens)
+        Embbed_openaAI(chunks, course_id, doc_id, doc_tokens)
         print("Embeddings done")
     else:
         error = "PDF Too Large"
-        callErrorWebhook(url_error_webhook, course_id, course_document_id, doc_tokens, error)
+        callErrorWebhook(url_error_webhook, course_id, doc_id, doc_tokens, error)
 #*************** end of main function to be called for processing document
 
 #*************** function to run the chunk embeddings and pushing to vector DB
@@ -341,17 +315,9 @@ def Embbed_openaAI(chunks, course_id, course_document_id, doc_tokens):
         #*************** if success, call webhook success
         try:
            #*************** set embedding and vector store
-            embeddings = OpenAIEmbeddings(model="text-embedding-3-large", max_retries=3, retry_min_seconds=30,
-                                          retry_max_seconds=60, show_progress_bar=True)
-
-            vstore = AstraDBVectorStore(
-            embedding=embeddings,
-            collection_name=astradb_collection_name,
-            api_endpoint=astradb_api_endpoint,
-            token=astradb_token_key,
-            )
+            vector_coll = get_vector_collection()
            #*************** end of set embedding and vector store
-            vstore.add_documents(chunks)
+            vector_coll.add_documents(chunks)
             print(cb)
             print("Calling Webhook for success uploading")
             return callWebhook(url_webhook, course_id, course_document_id, doc_tokens)
@@ -378,9 +344,7 @@ def resplit_chunk(chunk):
         tokens_for_semantic_chunker = tokens_semantic_chunker(chunk.page_content)
         set_semantic_chunker_token(tokens_for_semantic_chunker + get_semantic_chunker_token())
         text_splitter = SemanticChunker(
-            OpenAIEmbeddings(
-                model='text-embedding-3-large'
-            ), breakpoint_threshold_type="percentile", breakpoint_threshold_amount=threshold_amount
+            EmbeddingsModels().embedding_large_openai, breakpoint_threshold_type="percentile", breakpoint_threshold_amount=threshold_amount
         )
         docs = text_splitter.create_documents(texts=[chunk.page_content])
         all_docs_below_threshold = all(len(doc.page_content) <= 7000 for doc in docs)

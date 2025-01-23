@@ -22,8 +22,6 @@ DB_FILE = 'DB_FILE.json'
 LIST_DOCS = [
  {'course_id': 'doc_1_charte', 'course_name': 'Charte du Centre Partenaire'},
  {'course_id': 'doc_2_regle', 'course_name': 'Reglement de la certification'},
- {'course_id': 'ai_doc_001', 'course_name': 'AI_book'},
- {'course_id': 'ai_doc--1', 'course_name': 'Artificial Intelligence and the Future of Teaching and Learning'}
 ]
 
 # ********** initiate json list dict
@@ -314,6 +312,8 @@ def akabot_ui2():
                     # Check if the key is 'message' or 'messages' 
                     if 'message' in topic_data:
                         st.session_state.messages = topic_data['message']  
+                    elif 'messages' in topic_data:
+                        st.session_state.messages = topic_data['message']  
                     else:
                         st.session_state.messages = []  
                     
@@ -334,11 +334,11 @@ def akabot_ui2():
             
     # Main chat interface
     source = get_source_by_name(selected_doc)
-    
+    st.write(st.session_state.messages)
     # Chat container
     with st.container(border=True, height=370):
-        
         for message in st.session_state.messages:
+                st.write(message)
                 with st.chat_message(message["type"]):
                     st.markdown(message["content"])
                     if message["type"] == "ai" and "header_ref" in message and message["header_ref"]:
