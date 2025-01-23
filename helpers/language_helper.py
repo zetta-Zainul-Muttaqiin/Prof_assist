@@ -1,18 +1,27 @@
-from deep_translator import GoogleTranslator
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from models.lingua import LinguaModel
+from models.lingua  import LinguaModel
+from setup          import LOGGER
 
+# *************** Helper Function to detect langauge used form a text 
+def get_language_used(text: str) -> str:
+    """
+    Get language used by sentence or text.
+    Supported with Lingua language detector.
 
-def translate_language(text, target_lang):
-    # ********* translate language to English
+    Args:
+        text (str): a string inputted need to know the language used
+
+    Returns:
+        string: a language name. (e.g. english or french)
+    """
     try:
-        query_lang = LinguaModel().lingua.detect_language_of(text).name.lower()
-        translated_query = GoogleTranslator(source=query_lang, target=target_lang).translate(text)
-        return translated_query
+        lang_detected = LinguaModel().lingua.detect_language_of(text)
+        lang_result = lang_detected.name.lower()
+
+        LOGGER.info(f"Language used: {lang_result}")
+        
+        return lang_result
+    
     except Exception as error_lang:
-        print("An error occurred:", error_lang)
+        print("An error occurred when detect langugae with Lingua:", error_lang)
         return text
 
-translate_language("halo disana", "en")

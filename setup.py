@@ -17,7 +17,7 @@ LOGGER.info("Init Global Variable")
 load_dotenv(override=True)
 # ********* set token for openai and datastax
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+
 ASTRADB_TOKEN_KEY = os.getenv("ASTRADB_TOKEN_KEY")
 ASTRADB_API_ENDPOINT = os.getenv("ASTRADB_API_ENDPOINT")
 ASTRADB_COLLECTION_NAME = os.getenv("ASTRADB_COLLECTION_NAME")
