@@ -499,8 +499,9 @@ def akabot_ui():
             
     # ********** Main chat interface
     source = get_source_by_name(selected_doc)
-
-    # ********** Chat container
+    # st.write(st.session_state.messages)
+    
+    # Chat container
     with st.container(border=True, height=600):
         for message in st.session_state.messages:
             if isinstance(message, dict) and "type" in message and "content" in message:
