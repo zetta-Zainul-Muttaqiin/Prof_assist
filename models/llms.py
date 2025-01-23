@@ -1,7 +1,6 @@
 # *************** IMPORT FRAMEWORK *************** 
 from langchain_openai import ChatOpenAI
 from setup import OPENAI_API_KEY
-from openai import OpenAI
 from typing import Optional
 
 class LLMModels:
@@ -30,18 +29,3 @@ class LLMModels:
         )
 
         return llm_model
-
-class ClientOpenAI:
-    """
-    Define a clinet from oepnai key
-    """
-    def __init__(self):
-        self.client = self.create_client_gpt()
-    # ***** Define a function for intialize OpenAI Client
-    def create_client_gpt(self):
-        client = OpenAI(
-            api_key=OPENAI_API_KEY, 
-            max_retries=5
-            )
-        
-        return client
