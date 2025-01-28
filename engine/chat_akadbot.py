@@ -30,11 +30,13 @@ from helpers.chat_akadbot_helpers           import (
                                             )
 
 # *************** IMPORTS VALIDATORS ***************
+from validator.chunks_validation            import (
+                                                validate_context_input,
+                                                validate_document_input
+                                            )
 from validator.data_type_validatation       import (
                                                 validate_list_input,
-                                                validate_string_input,
-                                                validate_document_input,
-                                                validate_context_input,
+                                                validate_string_input
                                             )
 
 # *************** Function helper for help engine to convert chat history to chat messages
