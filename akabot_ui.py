@@ -63,28 +63,6 @@ def save_list_to_json(list_docs: list) -> None:
         json.dump(list_docs, json_file, indent=4)
 
 # ************ initiate json list dict
-
-st.set_page_config(layout="wide")
-
-# padding height
-st.markdown("""
-        <style>
-               .block-container {
-                    padding-top: 1rem;
-                    padding-bottom: 0rem;
-                    padding-left: 5rem;
-                    padding-right: 5rem;
-                }
-        </style>
-        """, unsafe_allow_html=True)
-
-DB_FILE = 'DB_FILE.json'
-LIST_DOCS = [
- {'course_id': 'doc_1_charte', 'course_name': 'Charte du Centre Partenaire'},
- {'course_id': 'doc_2_regle', 'course_name': 'Reglement de la certification'},
-]
-
-# ********** initiate json list dict
 def initialize_db():
     """
     Initiate json to save topic chat
@@ -403,27 +381,6 @@ def akabot_ui():
         plot_title_select_document()
 
         # ********** select box to choose course_name based on list_docs
-            
-        st.markdown("""
-            <div style="
-                background-color: #ffffff;
-                border-radius: 5px;
-                padding: 3px;
-                margin-bottom: 3px;
-                text-align: center;
-                box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.15);
-            ">
-                <h3 style="
-                    color: #333333;
-                    font-size: 12px;
-                    font-weight: bold;
-                    margin: 0;
-                    text-transform: uppercase;
-                    letter-spacing: 1.2px;
-                ">Select Document</h3>
-            </div>
-        """, unsafe_allow_html=True)
-         
         selected_doc = st.selectbox(
             "",
             options=[doc["course_name"] for doc in LIST_DOCS],
@@ -499,9 +456,8 @@ def akabot_ui():
             
     # ********** Main chat interface
     source = get_source_by_name(selected_doc)
-    # st.write(st.session_state.messages)
-    
-    # Chat container
+
+    # ********** Chat container
     with st.container(border=True, height=600):
         for message in st.session_state.messages:
             if isinstance(message, dict) and "type" in message and "content" in message:
