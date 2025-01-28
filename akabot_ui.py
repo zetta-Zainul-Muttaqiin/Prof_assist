@@ -6,6 +6,9 @@ import json
 import os
 from datetime               import datetime
 
+st.set_page_config(layout="wide")
+
+
 # padding height
 st.markdown("""
         <style>
@@ -337,7 +340,7 @@ def akabot_ui2():
     # st.write(st.session_state.messages)
     
     # Chat container
-    with st.container(border=True, height=370):
+    with st.container(border=True, height=600):
         for message in st.session_state.messages:
             if isinstance(message, dict) and "type" in message and "content" in message:
                 with st.chat_message(message["type"]):
