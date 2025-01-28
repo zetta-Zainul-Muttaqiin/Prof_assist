@@ -44,7 +44,7 @@ def get_context_based_question(query: str, course_id: str) -> list[tuple[Documen
 
     # *************** Perform similarity search with relevance filtering
     relevant_docs_score = vector_coll.similarity_search_with_relevance_scores(
-        query=query, k=4, filter={'course_id': course_id}, score_threshold=0.4
+        query=query, k=10, filter={'course_id': course_id}, score_threshold=0.5
     )
 
     return relevant_docs_score
