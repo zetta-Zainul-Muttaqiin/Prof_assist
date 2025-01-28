@@ -18,9 +18,6 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 LOGGER.info("Init Global Variable")
 
-# ********* load .env content
-load_dotenv(override=True)
-
 # ********* set token for openai, datastax, and json for list doc and chat topic
 OPENAI_API_KEY = api_key["OPENAI_API_KEY"]
 
@@ -31,6 +28,8 @@ ASTRADB_COLLECTION_NAME_UPLOAD_DOC = api_key["ASTRADB_COLLECTION_NAME_UPLOAD_DOC
 
 DB_FILE = api_key['DATABASE_CHAT_TOPIC']
 LIST_DOC_FILE = api_key["DATA_LIST_DOC"]
+
+URL_WEBHOOK = api_key['URL_WEBHOOK']
 
 GREETINGS_EN = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'hi, how is it going?', 'greetings!', 'how are you doing?', 'how do you do?', 'what`s up?']
 GREETINGS_FR = ['bonjour', 'salut', 'coucou', 'bonsoir', 'bonjour à tous', 'comment allez-vous ce matin ?', 'bonne journée', 'bonne soirée', 'bonne nuit', 'À bientôt', 'À plus tard', 'À tout à lheure', 'À demain', 'Ça va?', 'enchanté']
