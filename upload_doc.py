@@ -18,7 +18,13 @@ import fitz
 from models.embeddings import EmbeddingsModels
 from helpers.astradb_connect_helper import get_vector_collection
 
-from setup import LOGGER
+from setup import (LOGGER, 
+                    OPENAI_API_KEY, 
+                    ASTRADB_API_ENDPOINT, 
+                    URL_WEBHOOK,
+                    ASTRADB_COLLECTION_NAME, 
+                    ASTRADB_COLLECTION_NAME_UPLOAD_DOC, 
+                    ASTRADB_TOKEN_KEY)
 
 load_dotenv()
 # *************** to save the result of token count for semantic chunking in non-shared global variable 
@@ -31,15 +37,14 @@ def get_semantic_chunker_token():
 # *************** end of to save the result of token count for semantic chunking in non-shared global variable 
 
 #*************** retrieve keys from env file and set it to env variable
-openai_api_key = os.getenv("OPENAI_API_KEY")
-os.environ['OPENAI_API_KEY'] =  openai_api_key
-astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
-astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
-astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
-astradb_collection_name_upload_doc = os.getenv("ASTRADB_COLLECTION_NAME_UPLOAD_DOC")
+openai_api_key = OPENAI_API_KEY
+astradb_token_key = ASTRADB_TOKEN_KEY
+astradb_api_endpoint = ASTRADB_API_ENDPOINT
+astradb_collection_name = ASTRADB_COLLECTION_NAME
+astradb_collection_name_upload_doc = ASTRADB_COLLECTION_NAME_UPLOAD_DOC
 
-url_webhook = os.getenv("URL_WEBHOOK")
-url_error_webhook = os.getenv("URL_WEBHOOK")
+url_webhook = URL_WEBHOOK
+url_error_webhook = URL_WEBHOOK
 encoding = tiktoken.encoding_for_model("text-embedding-3-large")
 
 #*************** end of retrieve keys from env file and set it to env variable
