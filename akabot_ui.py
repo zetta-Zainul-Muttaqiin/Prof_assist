@@ -6,8 +6,6 @@ import json
 import os
 from datetime               import datetime
 
-st.set_page_config(layout="wide")
-
 # padding height
 st.markdown("""
         <style>
@@ -19,6 +17,8 @@ st.markdown("""
                 }
         </style>
         """, unsafe_allow_html=True)
+
+st.set_page_config(layout="wide")
 
 DB_FILE = 'DB_FILE.json'
 LIST_DOCS = [
