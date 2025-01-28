@@ -261,7 +261,7 @@ def join_reference(context: list[tuple[Document, float]], header_ref: str, simil
     # *************** Input Validation
     if not validate_context_input(context, "context"):
         LOGGER.error("'context' Not in required format data")
-    if not validate_list_input(header_ref, "header_ref", False):
+    if not validate_string_input(header_ref, "header_ref", False):
         LOGGER.error("'header_ref' Not in string type")
 
     # *************** Initalize reference for get unique header

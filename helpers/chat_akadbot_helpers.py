@@ -135,7 +135,7 @@ def update_chat_history(chat_history: list[dict], question: str, answer: str, re
         None
     """
     # ************* Validate chat_history in list
-    if not validate_list_input(chat_history, "chat_history"):
+    if not validate_list_input(chat_history, "chat_history", False):
         LOGGER.error("chat_history must be a non-empty list of dictionaries.")
     # *************** Validate input question not
     if not validate_string_input(question, 'question_history'):
