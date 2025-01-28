@@ -378,9 +378,9 @@ def resplit_chunk(chunk):
 def delete(document_id):
     from astrapy.db import AstraDB, AstraDBCollection
 
-    astradb_token_key = os.getenv("ASTRADB_TOKEN_KEY")
-    astradb_api_endpoint = os.getenv("ASTRADB_API_ENDPOINT")
-    astradb_collection_name = os.getenv("ASTRADB_COLLECTION_NAME")
+    astradb_token_key = ASTRADB_TOKEN_KEY
+    astradb_api_endpoint = ASTRADB_API_ENDPOINT
+    astradb_collection_name = ASTRADB_COLLECTION_NAME
     
     astra_db = AstraDB(token=astradb_token_key,
                        api_endpoint=astradb_api_endpoint)
