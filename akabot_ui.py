@@ -29,6 +29,7 @@ from helpers.streamlit_styling_helper           import (styling, plot_title,
                                                         plot_title_chat_topic)
 from helpers.streamlit_format_history_helper    import (format_chat_history, 
                                                         format_and_extract_header_returned)
+from helpers.sending_payload                    import send_log_data
 # ************ IMPORTS VALIDATOR ************
 from validator.data_type_validatation           import (validate_dict_input,  
                                                         validate_list_input, 
@@ -143,6 +144,52 @@ def get_source_by_name(doc_name: str) -> str:
         if doc["course_name"] == doc_name:
             return doc["course_id"]
     return None
+
+# *********** Function to create data request and response
+def log_request_response(question: str, course_id: str, chat_history: List[dict], topic:str, response_data: dict) -> dict:
+    """
+    Logs the request and response data to a JSON file.
+
+    Args:
+        question (str): The user's question.
+        course_id (str): The document/course ID.
+        chat_history (list): The chat history before the request.
+        topic (str): The chat topic.
+        response_data (dict): The response returned from the assistant.
+    """
+    
+    # *********** validate input data type
+    input_strings = [question, course_id, topic]
+    for input_string in input_strings:
+        if not validate_string_input(input_string, "input_string"):
+            LOGGER.error("input must be string to create log response data")
+    
+    if not validate_list_input(chat_history, "chat_history"):
+        LOGGER.error("chat history must be list to procces log response data")
+        
+    if not validate_dict_input(response_data, "response_data"):
+        LOGGER.error("response data must be a dict")
+    
+    # *********** create data log_entry
+    log_entry = {
+        "date_request": datetime.now().strftime("%d-%m-%Y %H:%M"),
+        "endpoint": "streamlit/student_question",
+        "request_data": {
+            "question": question,
+            "course_id": course_id,
+            "chat_history": chat_history,
+            "topic": topic
+        },
+        "response_data": {
+            "message": response_data.get("message", ""),
+            "chat_history": response_data.get("chat_history", []),
+            "topic": response_data.get("topic", ""),
+            "token_in": response_data.get("tokens_in", 0),
+            "token_out": response_data.get("tokens_out", 0),
+        }
+    }
+    
+    return log_entry
 
 # ************ function to format topic creation
 def format_topic_name(topic: str) -> str:
@@ -365,12 +412,30 @@ def akabot_ui():
             # ********** Process RAG
             with st.spinner("Thinking..."):
                 formatted_chat_history = format_chat_history(st.session_state.chat_history)
-                message, chat_history, topics, _, _ = ask_with_memory(
+                message, chat_history, topics, tokens_out, tokens_in = ask_with_memory(
                     prompt,
                     source,
                     formatted_chat_history,
                     "" if st.session_state.current_topic.startswith("New Chat") else st.session_state.current_topic
                 )
+                
+                # ********** Prepare response data
+                response_data = {
+                    "message": message,
+                    "chat_history": chat_history,
+                    "topic": topics,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out
+                }
+            
+                # ********** log request-response data
+                log_data = log_request_response(prompt, source, formatted_chat_history, topics, response_data)
+
+                # ********** Validate and send log data to database
+                if validate_dict_input(log_data, "data"):
+                    send_log_data(log_data)
+                else:
+                    LOGGER.error("Invalid log data format, skipping log storage.")
                 
                 # ********** Convert returned chat history to dictionary format
                 formatted_returned_history, header_ref_extracted = format_and_extract_header_returned(chat_history)
