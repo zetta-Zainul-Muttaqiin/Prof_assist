@@ -20,8 +20,6 @@ def get_vector_collection() -> AstraDBVectorStore:
 
     try:
 
-        print("COLL:", ASTRADB_COLLECTION_NAME)
-
         vector_store_integrated = AstraDBVectorStore(
             collection_name=ASTRADB_COLLECTION_NAME,
             api_endpoint=ASTRADB_API_ENDPOINT,

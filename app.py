@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import threading
 import time
 from upload_doc import callRequest #delete
-from Bilip_Ref_007 import ask_with_memory
+from engine.chat_akadbot import ask_with_memory
 from setup import LOGGER
 from helpers.error_handle_helper import handle_error
 # from quiz_builder import quiz_builder, quiz_editor
@@ -84,45 +84,82 @@ def process_pdf():
 #     except Exception as error:
 #         return jsonify({"error": str(error)}), 500
 
-
+# *************** Endpoint route for question answering to akadbot document
 @app.route("/student_question", methods=["POST"])
 def ask_question():
+    """
+    Handles student queries related to a course using the Akadbot engine.
+
+    This endpoint receives a student's question along with the course ID, chat history, 
+    and topic, then processes the question using the Akadbot engine with memory 
+    support and returns a response.
+
+    Request (JSON):
+        {
+            "question": Student's question
+            "course_id": Identifier for the course
+            "chat_history": (Optional) Chat history for context
+            "topic": (Optional) Topic to refine the query
+        }
+
+    Returns:
+        Response (JSON):
+        - Success (200):
+            {
+                "message": AI-generated response
+                "topic": Generated topic
+                "chat_history": Updated conversation history
+                "tokens_in": Number of input tokens used
+                "tokens_out": Number of output tokens generated
+            }
+        - Bad Request (400):
+            {
+                "error": True,
+                "message": "Bad Request: missing required input data: {question, course_id}"
+            }
+        - Internal Error (501/500):
+            {
+                "error": True,
+                "message": str  # Error description
+            }
+    """
     try:
-        start_time = time.time()
-        # ********* get request data from BE
+        # *************** Get request data from BE in JSON format
         data = request.get_json()
         question = data.get("question")
         course_id = data.get("course_id")
         chat_history = data.get("chat_history")
         topic = data.get("topic")
 
-        print(f"data_get: {data}")
-        # ******** send request data to engine
-        message, chat_history, topic, tokens_out, tokens_in = ask_with_memory(
-                question, course_id, chat_history, topic)
-        print(f"done ask_with_memory")
+        if data and question and course_id:
 
-        # ******** set response to BE
-        response = {"message": message,
-                    "topic": topic,
-                    "chat_history": chat_history,
-                    "tokens_in": tokens_in,
-                    "tokens_out": tokens_out,
-                    }
-        end_time = time.time()
-        print(f'All time consumed: {end_time-start_time} seconds')
-        return jsonify(response)
+            # *************** Send request data to engine as input
+            response = ask_with_memory(
+                    question=question, 
+                    course_id=course_id, 
+                    chat_history=chat_history, 
+                    topic=topic
+            )
+
+            # *************** Send response to backend
+            return jsonify(response), 200
+        
+        # *************** Handle missing required input of student_question
+        return jsonify({"error": True, "message": "Bad Request: missing required input data: {question, course_id}"}), 400
+    
+    # *************** Handling specific error
     except (KeyError, IndexError, TypeError, ValueError) as error:
         error_message = str(error)
         LOGGER.error(f"error occured (Akadbot): {error_message}")
-        handle_error(error, 'finance_assist_chat')
-        return jsonify({'error': True, 'message': error_message}), 500
+        handle_error(error, 'chat_akadbot')
+        return jsonify({"error": True, "message": error_message}), 501
     
+    # *************** Handle unexpected error
     except Exception as un_error:
         error_message = str(un_error)
         LOGGER.error(f"An unexpected error occurred (Akadbot): {error_message}")
-        handle_error(un_error, 'finance_assist_chat')
-        return jsonify({'error': True, 'message': error_message}), 404
+        handle_error(un_error, 'chat_akadbot')
+        return jsonify({"error": True, "message": error_message}), 500
 
 
 

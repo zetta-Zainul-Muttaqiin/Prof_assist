@@ -1,10 +1,20 @@
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# ************ IMPORT FRAMEWORK ************
+from langchain_experimental.text_splitter   import SemanticChunker
+from langchain.text_splitter                import RecursiveCharacterTextSplitter
+from langchain_community.callbacks          import get_openai_callback
+from langchain.docstore.document            import Document
+
+from setup import (LOGGER, 
+                    OPENAI_API_KEY, 
+                    ASTRADB_API_ENDPOINT, 
+                    URL_WEBHOOK,
+                    ASTRADB_COLLECTION_NAME, 
+                    ASTRADB_COLLECTION_NAME_UPLOAD_DOC, 
+                    ASTRADB_TOKEN_KEY)
+
+# ************ IMPORT ************
 from astrapy.db import AstraDB
 import datetime
-from langchain_community.callbacks          import get_openai_callback
-
-from langchain.docstore.document import Document
 from werkzeug.local import Local
 import openai
 from bs4 import BeautifulSoup
@@ -16,17 +26,15 @@ import tiktoken
 import fitz
 
 from models.embeddings import EmbeddingsModels
+
+# ************ IMPORT HELPER ************
 from helpers.astradb_connect_helper import get_vector_collection
 
-from setup import (LOGGER,
-                   ASTRADB_COLLECTION_NAME_UPLOAD_DOC, 
-                   ASTRADB_API_ENDPOINT, 
-                   ASTRADB_COLLECTION_NAME, 
-                   ASTRADB_TOKEN_KEY, 
-                   OPENAI_API_KEY,
-                   URL_WEBHOOK)
+# ************ IMPORT VALIDATOR ************
+from validator.data_type_validatation import validate_dict_input, validate_filter_entry, validate_int_input, validate_list_input, validate_string_input
 
 load_dotenv()
+
 # *************** to save the result of token count for semantic chunking in non-shared global variable 
 upload_doc = Local()
 def set_semantic_chunker_token(token):
