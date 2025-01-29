@@ -1,17 +1,20 @@
 # ************ IMPORTS FRAMEWORK ************
-import streamlit            as st
-from streamlit_option_menu  import option_menu
+import streamlit                                as st
+from streamlit_option_menu                      import option_menu
 
 # ************ IMPORTS ************
-import json
 import os
-from datetime               import datetime
-import threading
 import uuid 
-from astrapy                import DataAPIClient
 import time 
-from typing import List 
-from Bilip_Ref_007                              import ask_with_memory
+import json
+import threading
+
+from typing                                     import List 
+from astrapy                                    import DataAPIClient
+from datetime                                   import datetime
+
+# ************ IMPORTS ENGINE ************
+from engine.chat_akadbot                        import ask_with_memory
 from upload_doc                                 import callRequest
 
 # ************ IMPORTS SETUP ************
@@ -410,7 +413,6 @@ def akabot_ui():
                     "nav-link": {"white-space": "normal", "height": "auto", "min-height": "44px"}
                 }
             )
-            
             
             selected_base_topic = selected_topic #.split(" (")[0] if selected_topic else None
             
