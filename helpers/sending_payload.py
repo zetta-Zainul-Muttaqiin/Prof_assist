@@ -1,6 +1,15 @@
 import requests
 import json
 import re
+from astrapy import DataAPIClient
+
+from validator.data_type_validatation import validate_dict_input
+
+from setup import (ASTRADB_TOKEN_KEY, 
+                   ASTRADB_API_ENDPOINT, 
+                   ASTRA_KEYSPACE_NAME, 
+                   ASRA_COLLECTION_NAME_MEMO_STORAGE, 
+                   LOGGER)
 
 def send_webhook(url, payload):
     """
@@ -39,3 +48,24 @@ def json_handle_payload(json_str):
         response = {"error": error_message}
     
     return response
+
+def send_log_data(data:dict):
+    """
+    Function to send the log data into database
+    
+    Args:
+        data (dict): data dict payload
+    """
+    if not validate_dict_input(data, "data"):
+        print("data to send log must be a dict")
+        
+    client = DataAPIClient(ASTRADB_TOKEN_KEY)
+    database = client.get_database(ASTRADB_API_ENDPOINT)
+    coll = database.get_collection(name=ASRA_COLLECTION_NAME_MEMO_STORAGE, namespace=ASTRA_KEYSPACE_NAME)
+    
+    result = coll.insert_one(data)
+    inserted_count = len(result.inserted_id)  
+    inserted_count = (f"Inserted {inserted_count} documents successfully.")
+    LOGGER.info(f"Inserted {inserted_count} documents successfully.")
+        
+    
