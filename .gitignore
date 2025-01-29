@@ -26,7 +26,6 @@ share/python-wheels/
 *.egg
 MANIFEST
 secrets.toml
-LIST_DOC.json
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -51,7 +50,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-DB_FILE.json
 # Translations
 *.mo
 *.pot
