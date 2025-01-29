@@ -345,10 +345,11 @@ def akabot_ui():
                 with st.chat_message(message["type"]):
                     st.markdown(message["content"])
                     if message["type"] == "ai" and "header_ref" in message and message["header_ref"]:
+                        formatted_header_ref = message['header_ref'].replace("\n", "").replace("- ", "<br>-")
                         st.markdown(
                             f"""
                             <p style="color: gray; font-size: 12px;">
-                                References: {message['header_ref'].replace("- ", "<br>-")}
+                                References: {formatted_header_ref}
                             </p>
                             """,
                             unsafe_allow_html=True
