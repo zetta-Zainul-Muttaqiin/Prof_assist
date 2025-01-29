@@ -391,9 +391,10 @@ def akabot_ui():
 
         # ********** select box to choose course_name based on list_docs
         selected_doc = st.selectbox(
-            "",
+            "select document",
             options=[doc["course_name"] for doc in LIST_DOCS],
-            index=0
+            index=0,
+            label_visibility="hidden"
         )
         
         # ********** plot title chat topic in sidebar
