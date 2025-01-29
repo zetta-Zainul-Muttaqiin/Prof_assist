@@ -254,8 +254,6 @@ def akabot_ui():
     
     # ********** Sidebar for upload and buble chat
     with st.sidebar:
-        # ********** plot title upload doc in sidebar
-        plot_title_upload_doc()
 
         # ********** add space
         for _ in range(1):
