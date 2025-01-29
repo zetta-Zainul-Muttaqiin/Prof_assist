@@ -26,6 +26,9 @@ ASTRADB_COLLECTION_NAME_UPLOAD_DOC = api_key["ASTRADB_COLLECTION_NAME_UPLOAD_DOC
 DB_FILE = api_key['DATABASE_CHAT_TOPIC']
 LIST_DOC_FILE = api_key["DATA_LIST_DOC"]
 
+ASTRA_KEYSPACE_NAME = api_key["ASTRA_KEYSPACE_NAME"]
+ASRA_COLLECTION_NAME_MEMO_STORAGE = api_key["ASRA_COLLECTION_NAME_MEMO_STORAGE"]
+
 URL_WEBHOOK = api_key['URL_WEBHOOK']
 
 GREETINGS_EN = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'hi, how is it going?', 'greetings!', 'how are you doing?', 'how do you do?', 'what`s up?']
