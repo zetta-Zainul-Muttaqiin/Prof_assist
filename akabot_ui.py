@@ -266,7 +266,8 @@ def akabot_ui():
         selected_doc = st.selectbox(
             "",
             options=[doc["course_name"] for doc in LIST_DOCS],
-            index=0
+            index=0, 
+            label_visibility="collapsed"
         )
        
         # ********** add space
