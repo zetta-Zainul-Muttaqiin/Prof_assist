@@ -118,6 +118,7 @@ def plot_title_upload_doc():
 # ************ styling streamlit title select doc in sidebar
 def plot_title_select_document():
     st.markdown("""
+            <hr style="height:1px;border:none;color:#b5b5b3;background-color:#b5b5b3; margin:0px 0px 20px 0px" />
             <div style="
                 background-color: #ffffff;
                 border-radius: 5px;
@@ -140,6 +141,7 @@ def plot_title_select_document():
 # ************ styling streamlit title chat topic in sidebar
 def plot_title_chat_topic():
     st.markdown("""
+            <hr style="height:1px;border:none;color:#b5b5b3;background-color:#b5b5b3; margin:5px 0px 20px 0px" />
             <div style="
                 background-color: #ffffff;
                 border-radius: 5px;

@@ -14,28 +14,37 @@ from astrapy                                    import DataAPIClient
 from datetime                                   import datetime
 
 # ************ IMPORTS ENGINE ************
-from engine.chat_akadbot                        import ask_with_memory
 from upload_doc                                 import callRequest
+from engine.chat_akadbot                        import ask_with_memory
 
 # ************ IMPORTS SETUP ************
-from setup                                      import (ASTRADB_TOKEN_KEY, 
-                                                        ASTRADB_API_ENDPOINT, 
-                                                        LIST_DOC_FILE,
+from setup                                      import (
+                                                        LOGGER,
                                                         DB_FILE, 
+                                                        LIST_DOC_FILE,
+                                                        ASTRADB_TOKEN_KEY, 
+                                                        ASTRADB_API_ENDPOINT, 
                                                         ASTRADB_COLLECTION_NAME_UPLOAD_DOC,
-                                                        LOGGER)
+                                                )
 # ************ IMPORTS HELPER ************
-from helpers.streamlit_styling_helper           import (styling, plot_title, 
+from helpers.streamlit_styling_helper           import (
+                                                        styling, 
+                                                        plot_title, 
                                                         padding_height, 
+                                                        plot_title_chat_topic,
                                                         plot_title_upload_doc, 
                                                         plot_title_select_document,
-                                                        plot_title_chat_topic)
-from helpers.streamlit_format_history_helper    import (format_chat_history, 
-                                                        format_and_extract_header_returned)
+                                                )
+from helpers.streamlit_format_history_helper    import (
+                                                        format_chat_history, 
+                                                        format_and_extract_header_returned
+                                                )
 # ************ IMPORTS VALIDATOR ************
-from validator.data_type_validatation           import (validate_dict_input,  
+from validator.data_type_validatation           import (
+                                                        validate_dict_input,  
                                                         validate_list_input, 
-                                                        validate_string_input)
+                                                        validate_string_input
+                                                )
 
 
 
@@ -339,9 +348,9 @@ def akabot_ui():
         plot_title_upload_doc()
         
         # ********** Input fields for upload doc with callback
-        doc_url = st.text_input("Document URL")
-        doc_name = st.text_input("Document Name")
-        course_name = st.text_input("Course Name")
+        doc_url = st.text_input(label="Document URL")
+        doc_name = st.text_input(label="Document Name")
+        course_name = st.text_input(label="Course Name")
         
         # ********** button upload doc with callback
         if st.button(
@@ -376,9 +385,6 @@ def akabot_ui():
             # ********** Reset state after processing
             st.session_state["waiting_for_course"] = False
 
-        # ********** add space
-        for _ in range(1):
-            st.write("")
         
         # ********** plot title select document in sidebar 
         plot_title_select_document()
@@ -389,10 +395,6 @@ def akabot_ui():
             options=[doc["course_name"] for doc in LIST_DOCS],
             index=0
         )
-       
-        # ********** add space
-        for _ in range(1):
-            st.write("")
         
         # ********** plot title chat topic in sidebar
         plot_title_chat_topic()
@@ -463,13 +465,14 @@ def akabot_ui():
     with st.container(border=True, height=600):
         for message in st.session_state.messages:
             if isinstance(message, dict) and "type" in message and "content" in message:
-                with st.chat_message(message["type"]):
+                with st.chat_message('assitant' if message["type"]=='assistant' else message["type"]):
                     st.markdown(message["content"])
                     if message["type"] == "ai" and "header_ref" in message and message["header_ref"]:
+                        backslach_enter = "\n"
                         st.markdown(
                             f"""
                             <p style="color: gray; font-size: 12px;">
-                                References: {message['header_ref'].replace("- ", "<br>-")}
+                                References: <br>- {message['header_ref'].replace(backslach_enter, "- ").replace("- ", "<br>- ")}
                             </p>
                             """,
                             unsafe_allow_html=True
@@ -484,13 +487,16 @@ def akabot_ui():
             # ********** Process RAG
             with st.spinner("Thinking..."):
                 formatted_chat_history = format_chat_history(st.session_state.chat_history)
-                message, chat_history, topics, _, _ = ask_with_memory(
+                response = ask_with_memory(
                     prompt,
                     source,
                     formatted_chat_history,
                     "" if st.session_state.current_topic.startswith("New Chat") else st.session_state.current_topic
                 )
-                
+                message = response["message"]
+                chat_history = response["chat_history"]
+                topics = response["topic"]
+
                 # ********** Convert returned chat history to dictionary format
                 formatted_returned_history, header_ref_extracted = format_and_extract_header_returned(chat_history)
                 
