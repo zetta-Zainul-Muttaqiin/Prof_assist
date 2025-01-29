@@ -10,6 +10,7 @@ import threading
 import uuid 
 from astrapy                import DataAPIClient
 import time 
+import pytz
 from typing import List 
 from Bilip_Ref_007                              import ask_with_memory
 from upload_doc                                 import callRequest
@@ -170,9 +171,12 @@ def log_request_response(question: str, course_id: str, chat_history: List[dict]
     if not validate_dict_input(response_data, "response_data"):
         LOGGER.error("response data must be a dict")
     
-    # *********** create data log_entry
+    # *********** create data log_entry local time french
+    france_tz = pytz.timezone("Europe/Paris")
+    local_time_french = datetime.now(pytz.utc).astimezone(france_tz)
+    
     log_entry = {
-        "date_request": datetime.now().strftime("%d-%m-%Y %H:%M"),
+        "date_request": local_time_french.strftime("%d-%m-%Y %H:%M"),
         "endpoint": "streamlit/student_question",
         "request_data": {
             "question": question,
