@@ -282,7 +282,7 @@ def ask_with_memory(question, course_id, chat_history=[], topic=''):
                 ]
             )
 
-                # Chek if topic already exist and create summary as Topic
+        # Chek if topic already exist and create summary as Topic
         print(f'history: {chat_history}')
         if (topic == ''):
             print(f"no topics")
