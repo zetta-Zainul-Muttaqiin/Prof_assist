@@ -1,40 +1,45 @@
 # ************ IMPORTS FRAMEWORK ************
-import streamlit            as st
-from streamlit_option_menu  import option_menu
+import streamlit                                as st
+from streamlit_option_menu                      import option_menu
 
 # ************ IMPORTS ************
-import json
 import os
-from datetime               import datetime
-import threading
-import uuid 
-from astrapy                import DataAPIClient
-import time 
 import pytz
-from typing import List 
+import json
+from datetime import datetime
+
+from typing                                     import List 
+from datetime                                   import datetime
+
+# ************ IMPORTS ENGINE ************
 from Bilip_Ref_007                              import ask_with_memory
-from upload_doc                                 import callRequest
 
 # ************ IMPORTS SETUP ************
-from setup                                      import (ASTRADB_TOKEN_KEY, 
-                                                        ASTRADB_API_ENDPOINT, 
-                                                        LIST_DOC_FILE,
+from setup                                      import (
+                                                        LOGGER,
                                                         DB_FILE, 
-                                                        ASTRADB_COLLECTION_NAME_UPLOAD_DOC,
-                                                        LOGGER)
+                                                        LIST_DOC_FILE,
+                                                    
+                                                )
 # ************ IMPORTS HELPER ************
-from helpers.streamlit_styling_helper           import (styling, plot_title, 
+from helpers.streamlit_styling_helper           import (
+                                                        styling, 
+                                                        plot_title, 
                                                         padding_height, 
-                                                        plot_title_upload_doc, 
+                                                        plot_title_chat_topic,
                                                         plot_title_select_document,
-                                                        plot_title_chat_topic)
-from helpers.streamlit_format_history_helper    import (format_chat_history, 
-                                                        format_and_extract_header_returned)
-from helpers.sending_payload                    import send_log_data
+                                                )
+from helpers.streamlit_format_history_helper    import (
+                                                        format_chat_history, 
+                                                        format_and_extract_header_returned
+                                                )
+from helpers.sending_payload                    import  send_log_data
 # ************ IMPORTS VALIDATOR ************
-from validator.data_type_validatation           import (validate_dict_input,  
+from validator.data_type_validatation           import (
+                                                        validate_dict_input,  
                                                         validate_list_input, 
-                                                        validate_string_input)
+                                                        validate_string_input
+                                                )
 
 
 
@@ -146,6 +151,29 @@ def get_source_by_name(doc_name: str) -> str:
             return doc["course_id"]
     return None
 
+# ************ function to format topic creation
+def format_topic_name(topic: str) -> str:
+    """
+    Function to format topic name to replace <br> with empty string
+    Args:
+        topic (str): topic created
+
+    Returns:
+        topic (str): topic created
+    """
+    
+    # ************ validate topic 
+    if not validate_dict_input(topic, "topic"):
+        LOGGER.error(f"{topic} must be a dict")
+    
+    # ************ format to replace <br>
+    topic_name = topic.get('topic', 'Unnamed Topic').replace("<b>", "").replace("</b>", "")
+    created_at = topic.get('created_at', '')
+    
+    if created_at:
+        return f"{topic_name}"
+    return topic_name
+
 # *********** Function to create data request and response
 def log_request_response(question: str, course_id: str, chat_history: List[dict], topic:str, response_data: dict) -> dict:
     """
@@ -194,29 +222,6 @@ def log_request_response(question: str, course_id: str, chat_history: List[dict]
     }
     
     return log_entry
-
-# ************ function to format topic creation
-def format_topic_name(topic: str) -> str:
-    """
-    Function to format topic name to replace <br> with empty string
-    Args:
-        topic (str): topic created
-
-    Returns:
-        topic (str): topic created
-    """
-    
-    # ************ validate topic 
-    if not validate_dict_input(topic, "topic"):
-        LOGGER.error(f"{topic} must be a dict")
-    
-    # ************ format to replace <br>
-    topic_name = topic.get('topic', 'Unnamed Topic').replace("<b>", "").replace("</b>", "")
-    created_at = topic.get('created_at', '')
-    
-    if created_at:
-        return f"{topic_name}"
-    return topic_name
 
 # ************ function to handle buble chat to clear and create new default topic
 def clear_current_chat(db_data: List[dict]):
@@ -297,7 +302,6 @@ def akabot_ui():
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
         
-    
     # ********** ui for title in main display 
     text = plot_title()
     st.markdown(text, unsafe_allow_html=True)
@@ -305,25 +309,17 @@ def akabot_ui():
     
     # ********** Sidebar for upload and buble chat
     with st.sidebar:
-
-        # ********** add space
-        for _ in range(1):
-            st.write("")
         
         # ********** plot title select document in sidebar 
         plot_title_select_document()
 
         # ********** select box to choose course_name based on list_docs
         selected_doc = st.selectbox(
-            "",
+            "select document",
             options=[doc["course_name"] for doc in LIST_DOCS],
-            index=0, 
-            label_visibility="collapsed"
+            index=0,
+            label_visibility="hidden"
         )
-       
-        # ********** add space
-        for _ in range(1):
-            st.write("")
         
         # ********** plot title chat topic in sidebar
         plot_title_chat_topic()
@@ -394,14 +390,14 @@ def akabot_ui():
     with st.container(border=True, height=600):
         for message in st.session_state.messages:
             if isinstance(message, dict) and "type" in message and "content" in message:
-                with st.chat_message(message["type"]):
+                with st.chat_message('assitant' if message["type"]=='assistant' else message["type"]):
                     st.markdown(message["content"])
                     if message["type"] == "ai" and "header_ref" in message and message["header_ref"]:
-                        formatted_header_ref = message['header_ref'].replace("\n", "").replace("- ", "<br>-")
+                        backslach_enter = "\n"
                         st.markdown(
                             f"""
                             <p style="color: gray; font-size: 12px;">
-                                References: {formatted_header_ref}
+                                References: <br>- {message['header_ref'].replace(backslach_enter, "- ").replace("- ", "<br>- ")}
                             </p>
                             """,
                             unsafe_allow_html=True
@@ -416,13 +412,18 @@ def akabot_ui():
             # ********** Process RAG
             with st.spinner("Thinking..."):
                 formatted_chat_history = format_chat_history(st.session_state.chat_history)
-                message, chat_history, topics, tokens_out, tokens_in = ask_with_memory(
+                response = ask_with_memory(
                     prompt,
                     source,
                     formatted_chat_history,
                     "" if st.session_state.current_topic.startswith("New Chat") else st.session_state.current_topic
                 )
-                
+                message = response["message"]
+                chat_history = response["chat_history"]
+                topics = response["topic"]
+                tokens_in = response["tokens_in"]
+                tokens_out = response["tokens_out"]
+
                 # ********** Prepare response data
                 response_data = {
                     "message": message,
@@ -431,16 +432,16 @@ def akabot_ui():
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out
                 }
-            
+                
                 # ********** log request-response data
                 log_data = log_request_response(prompt, source, formatted_chat_history, topics, response_data)
-
+                
                 # ********** Validate and send log data to database
                 if validate_dict_input(log_data, "data"):
                     send_log_data(log_data)
                 else:
                     LOGGER.error("Invalid log data format, skipping log storage.")
-                
+                    
                 # ********** Convert returned chat history to dictionary format
                 formatted_returned_history, header_ref_extracted = format_and_extract_header_returned(chat_history)
                 
