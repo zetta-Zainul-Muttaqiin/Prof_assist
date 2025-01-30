@@ -29,6 +29,7 @@ from helpers.chat_akadbot_helpers           import (
                                                 get_context_based_history,
                                                 get_context_based_question,
                                             )
+from helpers.json_formatting_helper         import format_json_format
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.chunks_validation            import (
@@ -40,6 +41,15 @@ from validator.data_type_validatation       import (
                                                 validate_string_input
                                             )
 
+class ExpectedAnswer(BaseModel):
+    """ 
+    Expected answer defines the expected structure for response need to be in JSON with key message and is_answered
+    """
+    
+    response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
+    is_answered:str = Field(description=("Return to 'False' or 'True'. If the 'response' can explain based on the 'context'"))
+    
+    
 # *************** Function helper for help engine to convert chat history to chat messages
 def convert_chat_history(chat_history: list) -> list[BaseMessage]:
     """
@@ -171,58 +181,6 @@ def topic_creation(chat_history: list) -> str:
     # *************** Return the cleaned topic title
     return clear_result
 
-# ********** Function Helper for clean json output after LLM invoking with JSONOutputParser
-def json_clean_output(result: AIMessage) -> dict:
-    """
-    Cleans and parses the output from an AIMessage object to ensure it is in a structured 
-    dictionary format. Handles various cases where the AI's response might not be directly 
-    formatted as JSON.
-
-    Args:
-        result (AIMessage): The AI's output, either in dictionary format or as a string that 
-                            might contain JSON content.
-
-    Returns:
-        dict: A cleaned and parsed dictionary representation of the AI's response.
-
-    Raises:
-        Exception: If JSON parsing fails, the exception is raised and handled internally.
-    """
-    # ****** Check if the result is already in dictionary format
-    if not isinstance(result, dict):
-        # Extract content if the result is not a dictionary
-        result = result.content
-        
-        # ****** Attempt to parse the content as JSON
-        try:
-            clean_respon = json.loads(result.content)
-        except Exception as e:
-            # ****** Handle cases where JSON content is embedded in the output
-            json_content = re.search(r'({.*})', result, re.DOTALL)
-                
-            if json_content:
-                # Extract the JSON content from the matched group
-                json_content = json_content.group(1).strip()
-            else:
-                # Use raw output if JSON extraction fails
-                json_content = result
-                
-            # ****** Parse the extracted JSON content into a dictionary
-            clean_respon = json.loads(json_content)
-    else:
-        # Use the result directly if it's already a dictionary
-        clean_respon = result
-
-    return clean_respon
-
-class ExpectedAnswer(BaseModel):
-    """ 
-    Expected answer defines the expected structure for response need to be in JSON with key message and is_answered
-    """
-    
-    response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
-    is_answered:str = Field(description=("Return to 'False' or 'True'. If the 'response' can explain based on the 'context'"))
-    
 # *************** Function for defining RAG-Chaining with LLM as a chatbot for documents
 def generate_akadbot_chain() -> Runnable:
     """
@@ -373,41 +331,6 @@ def greetings_chat_handler(question: str, lang_used: str) -> str:
 
     return message
 
-# *************** Format json output after invoke 
-def format_json_format(output: str) -> str:
-    """
-    Ensures the model's output always follows the required JSON format.
-    
-    Args:
-        output (str): output llm after invoking
-
-    Returns:
-        str: output in a data type str but format like a dict.
-    """
-    
-    if isinstance(output, str):
-        # *************** Strip markdown JSON formatting if present
-        output = re.sub(r"^```json\n|\n```$", "", output.strip())
-
-        try:
-            # *************** Attempt to parse JSON
-            output_json = json.loads(output)
-
-            # *************** Ensure required keys exist in the JSON output
-            if isinstance(output_json, dict) and "response" in output_json and "is_answered" in output_json:
-                return output_json
-            
-        # *************** If JSON decoding fails, enforce the required format below
-        except json.JSONDecodeError:
-            pass  
-            LOGGER.warning("JSON decoding fails, enforce the required format 'response' and 'is_answered'.")
-
-    # *************** If the output is not valid JSON, wrap it as "response" and force "is_answered": "False"
-    return {
-        "response": output.strip(),
-        "is_answered": "False"
-    }
-
 # *************** MAIN FUNCTION
 def ask_with_memory(question: str, course_id: str, chat_history: list = [], topic: str = '') -> dict:
     """
@@ -488,9 +411,11 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
                     "language": lang_used,
                 }
             )
-           
+            
+            # *************** Format json when output is not in json format  
             output = format_json_format(output)
-                
+            
+            # *************** Get values message and is_answered from output json
             message = output.get("response")
             is_answered = output.get("is_answered")
            
@@ -502,8 +427,6 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
             header_ref = ""
             if is_answered == 'True':
                 header_ref = join_reference(context)
-            elif is_answered == 'False': 
-                header_ref = ""
 
             # *************** Add current question and answer into chat history with reference
             update_chat_history(chat_history, question, message, header_ref)
