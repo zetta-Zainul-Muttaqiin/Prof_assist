@@ -49,23 +49,3 @@ def json_clean_output(result: AIMessage) -> dict:
         clean_respon = result
 
     return clean_respon
-
-# *************** function to validate response if it is not a string
-def validate_message_response(message) -> str:
-    """
-    Converts message to string if it's not already a string.
-    
-    Args:
-        message: The message to validate (any type)
-        
-    Returns:
-        str: Message as string
-    """
-    try:
-        # *************** check if not a string and return in string format
-        if not isinstance(message, str):
-            return str(message)
-        return message
-    except Exception as e:
-        LOGGER.error(f"Failed to convert message to string: {str(e)}")
-        raise

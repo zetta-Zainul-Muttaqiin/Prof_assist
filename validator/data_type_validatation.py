@@ -1,3 +1,7 @@
+# *************** IMPORT ***************
+from typing import Any
+from setup import LOGGER
+
 # *************** Validator function for chek input in data type int
 def validate_int_input(input_number: any, input_name: str = "input", is_empty: bool = True) -> bool:
     """
@@ -127,3 +131,24 @@ def validate_filter_entry(filter_entry: any, required_keys: dict):
             raise KeyError(f"Invalid type for key '{key}'. Expected {expected_type}, got {type(filter_entry[key])}.")
 
     return True
+
+# *************** function to validate response if it is not a string
+def validate_message_response(message: Any) -> str:
+    """
+    Converts message to string if it's not already a string.
+    
+    Args:
+        message: The message to validate (any type)
+        
+    Returns:
+        str: Message as string
+    """
+    try:
+        if isinstance(message, list):
+            return ' '.join(str(item) for item in message)
+        if not isinstance(message, str):
+            return str(message)
+        return message
+    except Exception as e:
+        LOGGER.error(f"Failed to convert message to string: {str(e)}")
+        raise
