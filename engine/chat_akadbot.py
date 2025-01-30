@@ -241,7 +241,7 @@ def build_reference(document: Document) -> str:
     return " > ".join(reference_parts)
 
 # *************** Function get reference after joining correct metadata
-def join_reference(context: list[tuple[Document, float]], header_ref: str, similarity_threshold: float = 0.6) -> str:
+def join_reference(context: list[tuple[Document, float]], similarity_threshold: float = 0.6) -> str:
     """
     Joins context references where the similarity score exceeds the threshold.
 
@@ -251,7 +251,6 @@ def join_reference(context: list[tuple[Document, float]], header_ref: str, simil
     Args:
         context (List[Tuple[Document, float]]): A list of tuples where each contains a Document 
             object and its similarity score.
-        header_ref (str): Initial reference header to be updated with extracted metadata.
         similarity_threshold (float, optional): Minimum similarity score to include a document 
             in the reference. Defaults to 0.6.
 
@@ -261,23 +260,20 @@ def join_reference(context: list[tuple[Document, float]], header_ref: str, simil
     # *************** Input Validation
     if not validate_context_input(context, "context"):
         LOGGER.error("'context' Not in required format data")
-    if not validate_string_input(header_ref, "header_ref", False):
-        LOGGER.error("'header_ref' Not in string type")
 
     # *************** Initalize reference for get unique header
     references = set()
 
     # *************** Iterate through documents and extract references
     for document, similarity_value in context:
+        
+        # *************** Only get reference with simialrity aboev the threshold
         if similarity_value > similarity_threshold:
             reference = build_reference(document)
             references.add(reference)
         
-    # *************** Remove duplicate references
-    unique_lines = set(header_ref.split('\n'))
-    header_ref = '\n'.join(unique_lines)
-
-    return header_ref
+    # *************** Formatting reference into string
+    return "\n".join(sorted(references))
 
 # *************** Function to handling responsive chat with greetings
 def greetings_chat_handler(question: str, lang_used: str) -> str:
@@ -348,7 +344,6 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
 
     # *************** Define output target parameter for message and header refrenece in empty
     message = ''
-    header_ref = ''
     
     # *************** Detect language used from current question
     lang_used = get_language_used(question)
@@ -400,7 +395,7 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
             LOGGER.info(f"TIME TO INVOKE: {elapsed_time} seconds")
 
             # *************** Compile reference headers from retrieved context
-            header_ref = join_reference(context, header_ref)
+            header_ref = join_reference(context)
 
             # *************** Add current question and answer into chat history with reference
             update_chat_history(chat_history, question, message, header_ref)
