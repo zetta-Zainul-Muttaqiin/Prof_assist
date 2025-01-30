@@ -30,6 +30,7 @@ from helpers.chat_akadbot_helpers           import (
                                                 get_context_based_question,
                                             )
 from helpers.json_formatting_helper         import format_json_format
+from validator.data_type_validatation       import validate_message_response
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.chunks_validation            import (
@@ -412,13 +413,16 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
                 }
             )
             
-            # *************** Format json when output is not in json format  
+            # **************** Format json when output is not in json format  
             output = format_json_format(output)
-            
+           
             # *************** Get values message and is_answered from output json
             message = output.get("response")
             is_answered = output.get("is_answered")
-           
+            
+            # *************** validate message if not a string
+            message = validate_message_response(message)
+            
             end_time = time.time()
             elapsed_time = end_time - start_time
             LOGGER.info(f"TIME TO INVOKE: {elapsed_time} seconds")

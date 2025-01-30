@@ -1,7 +1,9 @@
 # ********** IMPORT LIBRARY *************
 import re
 import json
+from setup import LOGGER
 
+# ********** IMPORT FRAMEWORKS *************
 from langchain_core.messages import AIMessage
 
 # ********** Function Helper for clean json output after LLM invoking with JSONOutputParser
