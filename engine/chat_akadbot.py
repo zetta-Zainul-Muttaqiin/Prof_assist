@@ -30,7 +30,7 @@ from helpers.chat_akadbot_helpers           import (
                                                 get_context_based_question,
                                             )
 from helpers.json_formatting_helper         import format_json_format
-from helpers.response_error_helper          import validate_message_response
+from validator.data_type_validatation       import validate_message_response
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.chunks_validation            import (
