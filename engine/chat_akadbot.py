@@ -2,6 +2,7 @@
 import re
 import time
 from operator                               import itemgetter
+import json 
 
 # ************ IMPORT FRAMEWORKS ************** 
 from langchain.prompts                      import (
@@ -12,10 +13,10 @@ from langchain.prompts                      import (
 from langchain_core.messages                import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents               import Document
 from langchain_core.runnables               import Runnable
-from langchain_core.output_parsers          import StrOutputParser
+from langchain_core.output_parsers          import StrOutputParser, JsonOutputParser
 from langchain_community.callbacks          import get_openai_callback
 from langchain.chains.combine_documents     import create_stuff_documents_chain
-
+from pydantic                               import Field, BaseModel
 from setup import LOGGER, GREETINGS_EN, GREETINGS_FR
 
 # *************** IMPORTS MODELS ***************
@@ -28,6 +29,7 @@ from helpers.chat_akadbot_helpers           import (
                                                 get_context_based_history,
                                                 get_context_based_question,
                                             )
+from helpers.json_formatting_helper         import format_json_format
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.chunks_validation            import (
@@ -39,6 +41,15 @@ from validator.data_type_validatation       import (
                                                 validate_string_input
                                             )
 
+class ExpectedAnswer(BaseModel):
+    """ 
+    Expected answer defines the expected structure for response need to be in JSON with key message and is_answered
+    """
+    
+    response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
+    is_answered:str = Field(description=("Return to 'False' or 'True'. If the 'response' can explain based on the 'context'"))
+    
+    
 # *************** Function helper for help engine to convert chat history to chat messages
 def convert_chat_history(chat_history: list) -> list[BaseMessage]:
     """
@@ -186,31 +197,42 @@ def generate_akadbot_chain() -> Runnable:
     # *************** Set QA chain prompt for bot to understand context
     qa_system_prompt = """
     You are an expert on the document. Generate answers only based on the given context. 
-    Do not make up answers. If you don't know the answer based on the given context, 
-    state that you can't answer questions outside of this document.
+    Do not make up answers. Always return a response in JSON format.
+    
+    Instruction: 
+    - If the context is provided, analyze the "messages" and 
+      generate the answer based on the given context. Do not use external knowledge or assumptions.
     
     The context is: '''{context}'''
     
     Please generate the answer in {language} language.
+    
     """
 
-    # *************** Define the chat prompt template
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", qa_system_prompt),
-            MessagesPlaceholder(variable_name="messages"),
-        ]
-    )
+    # *************** Parser json output
+    parser = JsonOutputParser(pydantic_object=ExpectedAnswer)
+    format_instructions = parser.get_format_instructions()
+    
+    format_system_prompt = """
+    Your response **MUST** follow this exact JSON FORMAT OUTPUT **in all cases**:
+    {{
+    "response": "Your detailed answer here explaining the response to the user's question",
+    "is_answered": "Return to 'False' or 'True'. If the "response" can explain based on the "context"."
+    }}
+    """
 
-    # *************** Build RAG chain with document retriever, prompt, and LLM
+    qa_prompt = ChatPromptTemplate.from_messages([
+        ("system", qa_system_prompt),
+        ("system", format_system_prompt),
+        MessagesPlaceholder(variable_name="messages"),
+    ]).partial(format_instructions=format_instructions)
+
     ragChain = create_stuff_documents_chain(
         llm=LLMModels(temperature=0.2).llm_cv,
         prompt=qa_prompt,
-        output_parser=StrOutputParser(),
     )
-
+   
     LOGGER.info("Akadbot Chain Generated")
-
     return ragChain
 
 # *************** Functions helper for get reference from checking metadata header level
@@ -380,22 +402,31 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
 
             # *************** Get document chunks from context
             docs = [doc[0] for doc in context]
-
+           
             # *************** Answering question using the RAG chain
-            message = ragChain.invoke(
+            output = ragChain.invoke(
                 {
                     "context": docs,
                     "messages": history_input,
                     "language": lang_used,
                 }
             )
-
+            
+            # *************** Format json when output is not in json format  
+            output = format_json_format(output)
+            
+            # *************** Get values message and is_answered from output json
+            message = output.get("response")
+            is_answered = output.get("is_answered")
+           
             end_time = time.time()
             elapsed_time = end_time - start_time
             LOGGER.info(f"TIME TO INVOKE: {elapsed_time} seconds")
 
             # *************** Compile reference headers from retrieved context
-            header_ref = join_reference(context)
+            header_ref = ""
+            if is_answered == 'True':
+                header_ref = join_reference(context)
 
             # *************** Add current question and answer into chat history with reference
             update_chat_history(chat_history, question, message, header_ref)
