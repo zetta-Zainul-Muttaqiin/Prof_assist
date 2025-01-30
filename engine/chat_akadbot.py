@@ -2,6 +2,7 @@
 import re
 import time
 from operator                               import itemgetter
+import json 
 
 # ************ IMPORT FRAMEWORKS ************** 
 from langchain.prompts                      import (
@@ -12,10 +13,10 @@ from langchain.prompts                      import (
 from langchain_core.messages                import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents               import Document
 from langchain_core.runnables               import Runnable
-from langchain_core.output_parsers          import StrOutputParser
+from langchain_core.output_parsers          import StrOutputParser, JsonOutputParser
 from langchain_community.callbacks          import get_openai_callback
 from langchain.chains.combine_documents     import create_stuff_documents_chain
-
+from pydantic                               import Field, BaseModel
 from setup import LOGGER, GREETINGS_EN, GREETINGS_FR
 
 # *************** IMPORTS MODELS ***************
@@ -170,6 +171,58 @@ def topic_creation(chat_history: list) -> str:
     # *************** Return the cleaned topic title
     return clear_result
 
+# ********** Function Helper for clean json output after LLM invoking with JSONOutputParser
+def json_clean_output(result: AIMessage) -> dict:
+    """
+    Cleans and parses the output from an AIMessage object to ensure it is in a structured 
+    dictionary format. Handles various cases where the AI's response might not be directly 
+    formatted as JSON.
+
+    Args:
+        result (AIMessage): The AI's output, either in dictionary format or as a string that 
+                            might contain JSON content.
+
+    Returns:
+        dict: A cleaned and parsed dictionary representation of the AI's response.
+
+    Raises:
+        Exception: If JSON parsing fails, the exception is raised and handled internally.
+    """
+    # ****** Check if the result is already in dictionary format
+    if not isinstance(result, dict):
+        # Extract content if the result is not a dictionary
+        result = result.content
+        
+        # ****** Attempt to parse the content as JSON
+        try:
+            clean_respon = json.loads(result.content)
+        except Exception as e:
+            # ****** Handle cases where JSON content is embedded in the output
+            json_content = re.search(r'({.*})', result, re.DOTALL)
+                
+            if json_content:
+                # Extract the JSON content from the matched group
+                json_content = json_content.group(1).strip()
+            else:
+                # Use raw output if JSON extraction fails
+                json_content = result
+                
+            # ****** Parse the extracted JSON content into a dictionary
+            clean_respon = json.loads(json_content)
+    else:
+        # Use the result directly if it's already a dictionary
+        clean_respon = result
+
+    return clean_respon
+
+class ExpectedAnswer(BaseModel):
+    """ 
+    Expected answer defines the expected structure for response need to be in JSON with key message and is_answered
+    """
+    
+    response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
+    is_answered:str = Field(description=("Return to 'False' or 'True'. If the 'response' can explain based on the 'context'"))
+    
 # *************** Function for defining RAG-Chaining with LLM as a chatbot for documents
 def generate_akadbot_chain() -> Runnable:
     """
@@ -186,31 +239,42 @@ def generate_akadbot_chain() -> Runnable:
     # *************** Set QA chain prompt for bot to understand context
     qa_system_prompt = """
     You are an expert on the document. Generate answers only based on the given context. 
-    Do not make up answers. If you don't know the answer based on the given context, 
-    state that you can't answer questions outside of this document.
+    Do not make up answers. Always return a response in JSON format.
+    
+    Instruction: 
+    - If the context is provided, analyze the "messages" and 
+      generate the answer based on the given context. Do not use external knowledge or assumptions.
     
     The context is: '''{context}'''
     
     Please generate the answer in {language} language.
+    
     """
 
-    # *************** Define the chat prompt template
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", qa_system_prompt),
-            MessagesPlaceholder(variable_name="messages"),
-        ]
-    )
+    # *************** Parser json output
+    parser = JsonOutputParser(pydantic_object=ExpectedAnswer)
+    format_instructions = parser.get_format_instructions()
+    
+    format_system_prompt = """
+    Your response **MUST** follow this exact JSON FORMAT OUTPUT **in all cases**:
+    {{
+    "response": "Your detailed answer here explaining the response to the user's question",
+    "is_answered": "Return to 'False' or 'True'. If the "response" can explain based on the "context"."
+    }}
+    """
 
-    # *************** Build RAG chain with document retriever, prompt, and LLM
+    qa_prompt = ChatPromptTemplate.from_messages([
+        ("system", qa_system_prompt),
+        ("system", format_system_prompt),
+        MessagesPlaceholder(variable_name="messages"),
+    ]).partial(format_instructions=format_instructions)
+
     ragChain = create_stuff_documents_chain(
         llm=LLMModels(temperature=0.2).llm_cv,
         prompt=qa_prompt,
-        output_parser=StrOutputParser(),
     )
-
+   
     LOGGER.info("Akadbot Chain Generated")
-
     return ragChain
 
 # *************** Functions helper for get reference from checking metadata header level
@@ -309,6 +373,41 @@ def greetings_chat_handler(question: str, lang_used: str) -> str:
 
     return message
 
+# *************** Format json output after invoke 
+def format_json_format(output: str) -> str:
+    """
+    Ensures the model's output always follows the required JSON format.
+    
+    Args:
+        output (str): output llm after invoking
+
+    Returns:
+        str: output in a data type str but format like a dict.
+    """
+    
+    if isinstance(output, str):
+        # *************** Strip markdown JSON formatting if present
+        output = re.sub(r"^```json\n|\n```$", "", output.strip())
+
+        try:
+            # *************** Attempt to parse JSON
+            output_json = json.loads(output)
+
+            # *************** Ensure required keys exist in the JSON output
+            if isinstance(output_json, dict) and "response" in output_json and "is_answered" in output_json:
+                return output_json
+            
+        # *************** If JSON decoding fails, enforce the required format below
+        except json.JSONDecodeError:
+            pass  
+            LOGGER.warning("JSON decoding fails, enforce the required format 'response' and 'is_answered'.")
+
+    # *************** If the output is not valid JSON, wrap it as "response" and force "is_answered": "False"
+    return {
+        "response": output.strip(),
+        "is_answered": "False"
+    }
+
 # *************** MAIN FUNCTION
 def ask_with_memory(question: str, course_id: str, chat_history: list = [], topic: str = '') -> dict:
     """
@@ -380,22 +479,31 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
 
             # *************** Get document chunks from context
             docs = [doc[0] for doc in context]
-
+           
             # *************** Answering question using the RAG chain
-            message = ragChain.invoke(
+            output = ragChain.invoke(
                 {
                     "context": docs,
                     "messages": history_input,
                     "language": lang_used,
                 }
             )
-
+           
+            output = format_json_format(output)
+                
+            message = output.get("response")
+            is_answered = output.get("is_answered")
+           
             end_time = time.time()
             elapsed_time = end_time - start_time
             LOGGER.info(f"TIME TO INVOKE: {elapsed_time} seconds")
 
             # *************** Compile reference headers from retrieved context
-            header_ref = join_reference(context)
+            header_ref = ""
+            if is_answered == 'True':
+                header_ref = join_reference(context)
+            elif is_answered == 'False': 
+                header_ref = ""
 
             # *************** Add current question and answer into chat history with reference
             update_chat_history(chat_history, question, message, header_ref)
