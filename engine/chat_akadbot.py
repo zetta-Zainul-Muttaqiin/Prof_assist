@@ -412,7 +412,7 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
                 }
             )
             
-            # *************** Format json when output is not in json format  
+            # **************** Format json when output is not in json format  
             output = format_json_format(output)
             
             # *************** Get values message and is_answered from output json
