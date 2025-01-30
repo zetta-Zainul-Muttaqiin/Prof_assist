@@ -1,4 +1,3 @@
-validator
 # *************** IMPORT ***************
 from typing import Any
 from setup import LOGGER
