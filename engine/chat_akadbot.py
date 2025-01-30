@@ -418,7 +418,7 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
             # *************** Get values message and is_answered from output json
             message = output.get("response")
             is_answered = output.get("is_answered")
-           
+            
             end_time = time.time()
             elapsed_time = end_time - start_time
             LOGGER.info(f"TIME TO INVOKE: {elapsed_time} seconds")
