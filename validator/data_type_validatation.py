@@ -146,9 +146,29 @@ def validate_message_response(message: Any) -> str:
     try:
         if isinstance(message, list):
             return ' '.join(str(item) for item in message)
-        if not isinstance(message, str):
+        # *************** unique case message is nested dict with list
+        elif isinstance(message, dict):
+            # *************** Handle nested dictionaries and lists
+            result = []
+            for key, value in message.items():
+                if isinstance(value, list):
+                    # *************** Handle list of dictionaries
+                    for item in value:
+                        if isinstance(item, dict):
+                            # *************** Extract values from each dictionary
+                            item_values = [str(v) for v in item.values()]
+                            result.extend(item_values)
+                        else:
+                            result.append(str(item))
+                else:
+                    result.append(str(value))
+            return ' '.join(result)
+        
+        if not isinstance(message, str): 
             return str(message)
         return message
     except Exception as e:
         LOGGER.error(f"Failed to convert message to string: {str(e)}")
         raise
+    
+    
