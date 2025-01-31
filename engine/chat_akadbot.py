@@ -50,7 +50,7 @@ class ExpectedAnswer(BaseModel):
     """
     
     response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
-    is_answered:str = Field(description=("Return to 'False' or 'True'. If the 'response' can explain based on the 'context'"))
+    is_answered:str = Field(description=("If the 'response' have an explanation return to 'True' and return 'False' if 'response' can not answer."))
     
     
 # *************** Function helper for help engine to convert chat history to chat messages
@@ -230,8 +230,7 @@ def generate_akadbot_chain(query: str ,course_id: str) -> Runnable:
     Instruction: 
     - If the context is provided, analyze the "messages" and 
       generate the answer based on the given context. Do not use external knowledge or assumptions.
-    - If "messages" tend to know explanation more make sure to see the "context" clearly.
-    - Return answers in a clear readable format.
+    - If "messages" want to know explanation more, make sure to see the "context" clearly.
     
     The context is: '''{context}'''
     
@@ -248,7 +247,7 @@ def generate_akadbot_chain(query: str ,course_id: str) -> Runnable:
     Your response **MUST** follow this exact JSON FORMAT OUTPUT **in all cases**:
     {{
     "response": "Your detailed answer here explaining the response to the user's question.",
-    "is_answered": "Return to 'False' or 'True'. If the "response" can explain based on the "context"."
+    "is_answered": "If the "response" have an explanation answer return to 'True' and return 'False' if "response" can not answer."
     }}
     """
 
@@ -434,10 +433,11 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
            
             # *************** Answering question using the RAG chain
             output = ragChain.invoke({
-                "messages": history_input,
+                "messages": history_input[-5:],
                 "language": lang_used,
             })
             
+            print(f"\n\n history_input: {history_input}")
             print(f"\n\n output: {output}")
             
             # **************** Format json when output is not in json format  
