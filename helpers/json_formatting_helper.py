@@ -4,36 +4,68 @@ import re
 from setup import LOGGER
 
 # *************** Format json output after invoke 
-def format_json_format(output: str) -> str:
+def format_json_format(output) -> dict:
     """
-    Ensures the model's output always follows the required JSON format.
+    Formats output to return a dictionary with 'response' and 'is_answered' keys.
+    Handles cases where the answer might already be in JSON format.
     
     Args:
-        output (str): output llm after invoking
-
+        output: The LLM output dictionary
+        
     Returns:
-        str: output in a data type str but format like a dict.
+        dict: A dictionary containing 'response' and 'is_answered' keys
     """
+    # *************** Handle dictionary output
+    if isinstance(output, dict):
+        # *************** Get the answer/response
+        answer = output.get('answer', '')
+        
+        # *************** Check if answer is a string that contains JSON
+        if isinstance(answer, str):
+            try:
+                # # *************** Try to parse the answer as JSON
+                parsed_answer = json.loads(answer)
+                if isinstance(parsed_answer, dict):
+                    # *************** If it's already in the correct format, return it directly
+                    if "response" in parsed_answer and "is_answered" in parsed_answer:
+                        return parsed_answer
+                    # ***************If it has different keys, format it
+                    return {
+                        "response": parsed_answer.get("response", parsed_answer),
+                        "is_answered": parsed_answer.get("is_answered", "True")
+                    }
+            except json.JSONDecodeError:
+                # *************** If not JSON, use the answer as is
+                pass
+                
+        # *************** Return formatted dictionary
+        return {
+            "response": answer,
+            "is_answered": output.get('is_answered', 'False')
+        }
     
+    # *************** Handle string output
     if isinstance(output, str):
-        # *************** Strip markdown JSON formatting if present
-        output = re.sub(r"^```json\n|\n```$", "", output.strip())
-
         try:
-            # *************** Attempt to parse JSON
-            output_json = json.loads(output)
-
-            # *************** Ensure required keys exist in the JSON output
-            if isinstance(output_json, dict) and "response" in output_json and "is_answered" in output_json:
-                return output_json
-            
-        # *************** If JSON decoding fails, enforce the required format below
+            # *************** Try to parse as JSON
+            parsed_output = json.loads(output)
+            if isinstance(parsed_output, dict):
+                # *************** If it's already in the correct format, return it directly
+                if "response" in parsed_output and "is_answered" in parsed_output:
+                    return parsed_output
+                # *************** If it has different keys, format it
+                return {
+                    "response": parsed_output.get("response", parsed_output),
+                    "is_answered": parsed_output.get("is_answered", "False")
+                }
         except json.JSONDecodeError:
-            pass  
-            LOGGER.warning("JSON decoding fails, enforce the required format 'response' and 'is_answered'.")
-
-    # *************** If the output is not valid JSON, wrap it as "response" and force "is_answered": "False"
+            return {
+                "response": output,
+                "is_answered": "False"
+            }
+    
+    # *************** If output is neither dict nor string, convert to string
     return {
-        "response": output.strip(),
+        "response": output,
         "is_answered": "False"
     }
