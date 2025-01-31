@@ -50,7 +50,7 @@ class ExpectedAnswer(BaseModel):
     """
     
     response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
-    is_answered:str = Field(description=("If the 'response' have an explanation return to 'True' and return 'False' if 'response' can not answer."))
+    is_answered:str = Field(description=("'True' if you provided an answer in the 'response' field, 'False' if you cannot provide an answer"))
     
     
 # *************** Function helper for help engine to convert chat history to chat messages
@@ -247,7 +247,7 @@ def generate_akadbot_chain(query: str ,course_id: str) -> Runnable:
     Your response **MUST** follow this exact JSON FORMAT OUTPUT **in all cases**:
     {{
     "response": "Your detailed answer here explaining the response to the user's question.",
-    "is_answered": "If the "response" have an explanation answer return to 'True' and return 'False' if "response" can not answer."
+    "is_answered": "If the "response" HAVE AN EXPLANATION ANSWER return to 'True' and return 'False' if the "response" cannot answer."
     }}
     """
 
