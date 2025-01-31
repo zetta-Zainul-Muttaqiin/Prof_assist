@@ -16,7 +16,17 @@ from models.embeddings                      import EmbeddingsModels
 # *************** IMPORTS HELPERS ***************
 from helpers.sending_payload                import log_document_upload
 from helpers.embedding_helpers              import count_token_embedding_openai
-from helpers.astradb_connect_helper         import get_vector_collection, get_document_collection
+from helpers.upload_akadbot_helpers         import (
+                                                clean_html,
+                                                add_metadata,
+                                                split_into_sentences,
+                                                extract_headers_from_chunk, 
+                                                generate_contextual_triplets,
+                                            )
+from helpers.astradb_connect_helpers        import (
+                                                get_vector_collection, 
+                                                get_document_collection
+                                            )
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.chunks_validation            import validate_document_input
@@ -33,58 +43,76 @@ from setup                                  import (
                                                 URL_WEBHOOK,
                                             )
 
-#*************** function to load PDF from URL 
-def load_doc(pdf_path):
-    print("Load pdf...")
-    req = requests.get(pdf_path) 
-    pdf = fitz.open(stream = req.content, filetype="pdf")
-    print("Loader is done!...")
-    return pdf
+# *************** Function to load PDF from URL
+def load_doc(pdf_path: str) -> fitz.Document:
+    """
+    Load a PDF document from a given URL.
+    This function for read an URL PDF using request and fitz.
 
-#*************** function to get tag header HTML for each page
-def parsing_pdf_html(pdf):
-    print("Parsing pdf...")
-    join_page = ''
-    #*************** parsing each page in pdf to HTML tag
+    Args:
+        pdf_path (str): URL of the PDF file.
+
+    Returns:
+        fitz.Document: The loaded PDF document.
+    """
+    # *************** Validate pdf_path in URL string
+    if not is_url(pdf_path):
+        LOGGER.error("'pdf_path' must be a valid URL string.")
+
+    # *************** Get usage for access to the PDF link
+    req = requests.get(pdf_path)
+    # *************** Raise an error for failed requests
+    req.raise_for_status()
+
+    # *************** Open the PDF requested with Fitz in streamable mode
+    pdf = fitz.open(stream=req.content, filetype="pdf")
+
+    LOGGER.info(f"Loader is done. Total pages: {len(pdf)}")
+    return pdf
+    
+# *************** Function to get tag header HTML for each page
+def parse_pdf_headers(pdf: fitz.Document) -> str:
+    """
+    Extracts and joins all header tags (<h1>-<h4>) from each page of a PDF, 
+    retaining header structure in the output string.
+
+    Args:
+        pdf (fitz.Document): The PDF document to parse.
+
+    Returns:
+        str: A joined string containing all extracted header tags.
+    """
+    # *************** Validate fitz document input
+    if not pdf or len(pdf) == 0:
+        LOGGER.error("The provided PDF document is empty or invalid.")
+        raise ValueError("The provided PDF document is empty or invalid.")
+    
+    # *************** Use a list for efficient string concatenation
+    extracted_text = []
+
+    # *************** parsing each page in pdf to HTML tag
     for page in pdf:
         page_html = page.get_textpage().extractXHTML() 
         search_html = BeautifulSoup(page_html, "html.parser")
 
-        #*************** find all header tag <h> inside div tag
+        # *************** Check div tag is exist in the pdf html
+        if not search_html.div:
+            LOGGER.warning(f"<div> Not Found on page {pdf.index(page)}")
+            continue
+
+        # *************** Get into lines inside the div tag
         for line in search_html.div:
-            if line.name == "h1" and not line.find("i"):
-                join_page += f"{line}" + " "
-
-            elif line.name == "h2" and not line.find("i"):
-                join_page += f"{line}" + " "
-
-            elif line.name == "h3" and not line.find("i"):
-                join_page += f"{line}" + " "
-
-            elif line.name == "h4" and not line.find("i"):
-                join_page += f"{line}" + " "
             
+            # *************** Retain all headers tag needed and not in Italic format
+            if line.name in ("h1", "h2", "h3", "h4") and not line.find("i"):
+                extracted_text.append(str(line))
+            
+            # *************** Except headers will reader as text or page string
             else:
-                join_page += f"{line.text}" + " "
-        #*************** end parsing each page in pdf to HTML tag
-                
-    join_page = join_page.strip()
-    print("Parsing is done!...")
-    return join_page
-
-#*************** function to add \n\n breakspace
-def remove_break_add_whitespace(text):
-    print("Retaining whitespace...")
-    pattern = r"(\n)([a-z])"
-    pattern2 = r"\n"
-
-    replacement = r" \2"
-    replacement2 = r"\n\n"
-
-    replace_break = re.sub(pattern, replacement, text)
-    replace_break = re.sub(pattern2, replacement2, replace_break)
-    print("WHite space is retain...")
-    return replace_break
+                extracted_text.append(line.text.strip())
+    
+    # *************** Join extracted text with spaces and return
+    return " ".join(extracted_text).strip()
 
 # *************** Function to split document based on semantic meaning of the document with breakpoint threshold 75 percentile
 def create_document_by_semantic(chunks_text: str, threshold_amount: int=75) -> list[Document]:
@@ -123,56 +151,47 @@ def create_document_by_semantic(chunks_text: str, threshold_amount: int=75) -> l
     
     return docs
 
-#**************** function to retrieve header based on tag '<h>' and save it to metadata header
-def extract_headers(document):
-    print("extracting header...")
-    
-    h1 = None # first header 1 is null
-    h2 = None # first header 2 is null
-    h3 = None # first header 3 is null
-    h4 = None # first header 4 is null
-    docs = [] # final chunks will append to this array
-    clean = re.compile('<.*?>') # for clean all type of HTML
+# *************** Function to process all document chunks
+def extract_headers(document: list[Document]) -> list[Document]:
+    """
+    Extracts headers from multiple document chunks and assigns them as metadata.
 
-    #**************** set metadata header from each chunks based on tag <h>
+    Args:
+        document (list[Document]): A list of document chunks.
+
+    Returns:
+        list[Document]: A list of documents with extracted headers as metadata.
+    """
+
+    # *************** Validate the input list of documents
+    if not validate_list_input(document, 'document_header'):
+        LOGGER.error("'document' must be a list of Document based")
+
+    # *************** Initialize an empty list to store processed documents
+    docs = []
+
+    # *************** Iterate through each document chunk
     for chunk in document:
-        clean_content = re.sub(clean, '', chunk.page_content)
+        # *************** Extract headers from each chunk
+        headers = extract_headers_from_chunk(chunk)
+
+        # *************** Clean the HTML content of the chunk
+        clean_content = clean_html(chunk.page_content)
+
+        # *************** Create a new Document with cleaned content
         temp_doc = Document(page_content=clean_content)
 
+        # *************** Assign the extracted headers as metadata to the document
+        temp_doc.metadata = headers
 
-        search_tag = BeautifulSoup(chunk.page_content, "html.parser")
-        #**************** check each start of sentences with <h> will set as header based on the header level
-        for line in search_tag:
-            header =  line.text
-            if (len(header) > 1) & (re.match(r'^\W' , header) is None):
-                if line.name == "h1":
-                    h1 = header
-                    h2 = None
-                    h3 = None
-                    h4 = None
-                elif line.name == "h2":
-                    h2 = header
-                    h3 = None
-                    h4 = None
-                elif line.name == "h3":
-                    h3 = header
-                    h4 = None
-                elif line.name == "h4":
-                    h4 = header
-        #**************** end of check each start of sentences with <h> will set as header based on the header level 
-            #*************** add metadata header to chunk
-            temp_doc.metadata = {
-                    "header1": h1,
-                    "header2": h2,
-                    "header3": h3,
-                    "header4": h4
-                    }
-        #**************** end of check sentences start with tag <h>
+        # *************** Append the processed document to the docs list
         docs.append(temp_doc)
-    #*************** end of set metadata header based on tag <h>
-    print("Header is ready...")
+
+    # *************** Log the number of processed chunks
+    LOGGER.info(f"Chunks Listed with Headers: {len(docs)}")
+
+    # *************** Return the list of documents with headers as metadata
     return docs
-#**************** end of function to retrieve header based on tag <h> and save it to metadata header
 
 # *************** Function to track token usage of semantic chunker process
 def tokens_semantic_chunker(text_chunks: str) -> int:
@@ -204,117 +223,6 @@ def tokens_semantic_chunker(text_chunks: str) -> int:
     LOGGER.info(f"Tokens for semantic chunking estimation: {total_tokens}")
     
     return total_tokens
-
-# *************** Function to split text into sentences
-def split_into_sentences(text: str) -> list:
-    """
-    Splits text into individual sentences based on '.', '?', or '!' delimiters.
-
-    Args:
-        text (str): The input text to be split.
-
-    Returns:
-        list: A list of dictionaries containing sentences and their original indices.
-    """
-    
-    # *************** Validate input text
-    if not validate_string_input(text, 'text_split_semantic'):
-        LOGGER.error("'text' must be a valid string input")
-        raise ValueError("'text' must be a valid string input")
-    
-    # *************** Split text using regex
-    sentence_list = re.split(r'(?<=[.?!])\s+', text)
-    
-    # *************** Return sentence with index ordering based on the regex order
-    return [{'sentence': sentence, 'index': idx} for idx, sentence in enumerate(sentence_list)]
-
-# *************** Function to generate contextual triplets
-def generate_contextual_triplets(sentences: list, buffer_size: int) -> list:
-    """
-    Generates contextual triplets by combining each sentence with its neighboring sentences.
-
-    Args:
-        sentences (list): A list of dictionaries containing individual sentences.
-        buffer_size (int): The number of adjacent sentences to include.
-
-    Returns:
-        list: Updated list with combined sentences for context.
-    """
-    
-    # *************** Validate input list
-    if not isinstance(sentences, list) or not all(isinstance(item, dict) and 'sentence' in item for item in sentences):
-        LOGGER.error("'sentences' must be a list of dictionaries containing 'sentence' keys")
-        raise ValueError("'sentences' must be a valid list of dictionaries containing 'sentence' keys")
-    
-    if not isinstance(buffer_size, int) or buffer_size < 0:
-        LOGGER.error("'buffer_size' must be a non-negative integer")
-        raise ValueError("'buffer_size' must be a non-negative integer")
-    
-    # *************** Generate combined sentences
-    for index, sentence_data in enumerate(sentences):
-        start_idx = max(0, index - buffer_size)
-        end_idx = min(len(sentences), index + buffer_size + 1)
-        
-        # *************** Combined the sentece by the neighboring sentences indexing 
-        sentence_data['combined_sentence'] = " ".join(sentences[idx]['sentence'] for idx in range(start_idx, end_idx))
-    
-    return sentences
-
-# *************** Function to add metadata to a document chunk
-def add_metadata(doc: Document, document_processed: dict) -> Document:
-    """
-    Adds metadata information to a document chunk.
-
-    This function updates the document's metadata with course and document details. 
-    It also ensures that essential metadata fields exist and calculates the token 
-    embedding count for the document content.
-
-    Args:
-        doc (Document): The document chunk that requires metadata addition.
-        document_processed (dict): A dictionary containing document metadata with required keys:
-            - course_id (str): The unique identifier of the course.
-            - course_name (str): The name of the course.
-            - document_name (str): The name of the document.
-            - document_id (str): The unique identifier of the document.
-
-    Returns:
-        Document: The updated document chunk with metadata.
-    
-    Raises:
-        ValueError: If the document or metadata dictionary is invalid.
-    """
-    # *************** Validate input document
-    if not validate_document_input(doc, 'doc_metadata'):
-        LOGGER.error("'doc' must be in Document format")
-        raise ValueError("'doc' must be a valid Document object")
-
-    # *************** Validate metadata dictionary
-    field_required = {"course_id": str, "course_name": str, "document_id": str, "document_name": str}
-    if not validate_dict_keys(document_processed, field_required):
-        LOGGER.error(f"'document_processed' is missing required keys: {field_required}")
-        raise ValueError(f"'document_processed' must contain keys: {field_required}")
-
-    # *************** Extract metadata fields
-    course_id = document_processed["course_id"]
-    course_name = document_processed["course_name"]
-    doc_id = document_processed["document_id"]
-    doc_name = document_processed["document_name"]
-
-    # *************** Ensure all metadata fields exist
-    metadata_fields = ["header1", "header2", "header3", "header4"]
-    for field in metadata_fields:
-        doc.metadata[field] = doc.metadata.get(field, "")
-
-    # *************** Update metadata and compute token embeddings
-    doc.metadata.update({
-        "course_id": str(course_id),
-        "course_name": str(course_name),
-        "document_name": str(doc_name),
-        "document_id": str(doc_id),
-        "tokens_embbed": count_token_embedding_openai(doc.page_content)
-    })
-
-    return doc
 
 # *************** Function to handle large document chunks by resplitting
 def handle_large_chunk(large_chunk: Document, document_processed: dict) -> tuple[list[Document], int]:
@@ -605,16 +513,14 @@ def upload_akadbot_document(url: str, course_id: str, course_name: str, doc_name
     pdf_page = load_doc(url)
     
     # *************** Extract text content from PDF
-    pdf_page_parsed = parsing_pdf_html(pdf_page)
-    
-    # *************** Clean formatting issues
-    removed_break = remove_break_add_whitespace(pdf_page_parsed)
+    pdf_page_parsed = parse_pdf_headers(pdf_page)
+    LOGGER.info(f"Parsed: {pdf_page_parsed}")
     
     # *************** Create document structure for semantic processing
-    doc = create_document_by_semantic(removed_break)
+    doc = create_document_by_semantic(pdf_page_parsed)
     
     # *************** Compute semantic chunking token usage
-    semantic_tokens = tokens_semantic_chunker(removed_break)
+    semantic_tokens = tokens_semantic_chunker(pdf_page_parsed)
     # *************** Update token usage with semantic tokens used
     doc_tokens += semantic_tokens  
     
@@ -724,7 +630,7 @@ def delete_list_document(list_document: list[str]) -> str:
 
 if __name__ == "__main__":
     upload_akadbot_document(
-        "https://api.features-v2.zetta-demo.space/fileuploads/Blue-Ocean-30fd28f7-88bf-4571-835d-17e6a4d01ec5.pdf",
+        "https://api.features-v2.zetta-demo.space/fileuploads/MDC-2026---Charte-du-Centre-Partenaire-a53eee77-6fcb-4e1d-99a5-468e0da64ba4-fd69bff7-f17f-43f7-822f-1048ec9b4be1-55584a77-e2c9-4aa7-80f5-1d4368d399cb.pdf",
         "testing_002", 
         "Sea Course", 
         "Blue Ocean", 
