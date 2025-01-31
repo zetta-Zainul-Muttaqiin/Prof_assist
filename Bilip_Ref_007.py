@@ -3,6 +3,7 @@ import re
 import time
 from operator                               import itemgetter
 import json 
+from functools import partial
 
 # ************ IMPORT FRAMEWORKS ************** 
 from langchain.prompts                      import (
@@ -12,7 +13,7 @@ from langchain.prompts                      import (
                                             )
 from langchain_core.messages                import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents               import Document
-from langchain_core.runnables               import Runnable
+from langchain_core.runnables               import Runnable, RunnablePassthrough
 from langchain_core.output_parsers          import StrOutputParser, JsonOutputParser
 from langchain_community.callbacks          import get_openai_callback
 from langchain.chains.combine_documents     import create_stuff_documents_chain
@@ -39,7 +40,8 @@ from validator.chunks_validation            import (
                                             )
 from validator.data_type_validatation       import (
                                                 validate_list_input,
-                                                validate_string_input
+                                                validate_string_input,
+                                                validate_dict_input
                                             )
 
 class ExpectedAnswer(BaseModel):
@@ -48,7 +50,7 @@ class ExpectedAnswer(BaseModel):
     """
     
     response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
-    is_answered:str = Field(description=("Return to 'False' or 'True'. If the 'response' can explain based on the 'context'"))
+    is_answered:str = Field(description=("If the 'response' have an explanation return to 'True' and return 'False' if 'response' can not answer."))
     
     
 # *************** Function helper for help engine to convert chat history to chat messages
@@ -182,8 +184,29 @@ def topic_creation(chat_history: list) -> str:
     # *************** Return the cleaned topic title
     return clear_result
 
+# *************** Function to get current question
+def get_current_question(input_dict: dict) -> list:
+    """
+    Get current question to pass it to the retriever 
+    
+    Args:
+        input_dict (dict): Dictionary containing messages and other inputs
+        course_id (str): Course identifier for filtering documents
+        
+    Returns:
+        list: List of Document objects
+    """
+    
+    if not validate_dict_input(input_dict, "input_dict"): 
+        LOGGER.error("input_dict must be a string")
+    
+    # *************** get current question from user
+    history_input = input_dict["messages"]
+    current_question = history_input[-1].content
+    return current_question
+
 # *************** Function for defining RAG-Chaining with LLM as a chatbot for documents
-def generate_akadbot_chain() -> Runnable:
+def generate_akadbot_chain(query: str ,course_id: str) -> Runnable:
     """
     Creates a RAG (Retrieval-Augmented Generation) chain for answering questions using an LLM.
 
@@ -191,6 +214,10 @@ def generate_akadbot_chain() -> Runnable:
     generated strictly based on retrieved document context. It ensures that the bot does 
     not generate answers beyond the given context.
 
+    Args:
+        query (str): The user's input question or request
+        course_id (str): Identifier for the course to search within
+        
     Returns:
         Runnable: A configured RAG chain ready for answering document-based questions.
     """
@@ -203,6 +230,7 @@ def generate_akadbot_chain() -> Runnable:
     Instruction: 
     - If the context is provided, analyze the "messages" and 
       generate the answer based on the given context. Do not use external knowledge or assumptions.
+    - If "messages" want to know explanation more, make sure to see the "context" clearly.
     
     The context is: '''{context}'''
     
@@ -214,27 +242,37 @@ def generate_akadbot_chain() -> Runnable:
     parser = JsonOutputParser(pydantic_object=ExpectedAnswer)
     format_instructions = parser.get_format_instructions()
     
+    # *************** Define the system prompt format for the LLM must follow
     format_system_prompt = """
     Your response **MUST** follow this exact JSON FORMAT OUTPUT **in all cases**:
     {{
-    "response": "Your detailed answer here explaining the response to the user's question",
-    "is_answered": "Return to 'False' or 'True'. If the "response" can explain based on the "context"."
+    "response": "Your detailed answer here explaining the response to the user's question.",
+    "is_answered": "If the "response" have an explanation answer return to 'True' and return 'False' if "response" can not answer."
     }}
     """
 
+    # *************** Combine system prompts and message placeholder into a chat template
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", qa_system_prompt),
         ("system", format_system_prompt),
         MessagesPlaceholder(variable_name="messages"),
     ]).partial(format_instructions=format_instructions)
 
+    # *************** Create the document processing chain with configured LLM
     ragChain = create_stuff_documents_chain(
         llm=LLMModels(temperature=0.2).llm_cv,
         prompt=qa_prompt,
     )
-   
+    
+    # *************** Build the final chain that handles context retrieval and response generation
+    conv_retrieval_chain = RunnablePassthrough.assign(
+        context= get_current_question | get_context_based_question(query, course_id),
+    ).assign(
+        answer=ragChain,
+    )
+    
     LOGGER.info("Akadbot Chain Generated")
-    return ragChain
+    return conv_retrieval_chain
 
 # *************** Functions helper for get reference from checking metadata header level
 def build_reference(document: Document) -> str:
@@ -264,7 +302,7 @@ def build_reference(document: Document) -> str:
     return " > ".join(reference_parts)
 
 # *************** Function get reference after joining correct metadata
-def join_reference(context: list[tuple[Document, float]], similarity_threshold: float = 0.6) -> str:
+def join_reference(context: list[Document]) -> str:
     """
     Joins context references where the similarity score exceeds the threshold.
 
@@ -288,15 +326,15 @@ def join_reference(context: list[tuple[Document, float]], similarity_threshold: 
     references = set()
 
     # *************** Iterate through documents and extract references
-    for document, similarity_value in context:
+    for document in context:
         
         # *************** Only get reference with simialrity aboev the threshold
-        if similarity_value > similarity_threshold:
-            reference = build_reference(document)
-            references.add(reference)
-        
+        reference = build_reference(document)
+        references.add(reference)
+    
+    sorted_reference = sorted(references)[:4]
     # *************** Formatting reference into string
-    return "\n".join(sorted(references))
+    return "\n".join(sorted_reference)
 
 # *************** Function to handling responsive chat with greetings
 def greetings_chat_handler(question: str, lang_used: str) -> str:
@@ -387,41 +425,32 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
 
         else:
             # *************** Generate Akadbot RAG Chain
-            ragChain = generate_akadbot_chain()
+            ragChain = generate_akadbot_chain(question,course_id)
 
             # *************** Convert chat history into structured format
             history_input = convert_chat_history(chat_history)
             history_input.extend([HumanMessage(content=question)])
-
-            # *************** Retrieve relevant context from past conversations or documents
-            if chat_history:
-                context = get_context_based_history(history_input, course_id)
-            else:
-                context = get_context_based_question(question, course_id)
-
-            LOGGER.info(f"CONTEXT: {len(context)}\n{context}")
-
-            # *************** Get document chunks from context
-            docs = [doc[0] for doc in context]
            
             # *************** Answering question using the RAG chain
-            output = ragChain.invoke(
-                {
-                    "context": docs,
-                    "messages": history_input,
-                    "language": lang_used,
-                }
-            )
+            output = ragChain.invoke({
+                "messages": history_input[-5:],
+                "language": lang_used,
+            })
+            
+            print(f"\n\n history_input: {history_input}")
+            print(f"\n\n output: {output}")
             
             # **************** Format json when output is not in json format  
-            output = format_json_format(output)
-           
+            output_format_json = format_json_format(output)
+            
             # *************** Get values message and is_answered from output json
-            message = output.get("response")
-            is_answered = output.get("is_answered")
+            message_response = output_format_json.get('response')
+            is_answered = output_format_json.get('is_answered')
             
             # *************** validate message if not a string
-            message = validate_message_response(message)
+            message = validate_message_response(message_response)
+            print(f"\n\n mesasages: {message}")
+            print(f"\n\n is_answered: {is_answered}")
             
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -430,7 +459,9 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
             # *************** Compile reference headers from retrieved context
             header_ref = ""
             if is_answered == 'True':
-                header_ref = join_reference(context)
+                get_contexts = output.get('context')
+                print(f"\n\n get_contexts: {get_contexts}")
+                header_ref = join_reference(get_contexts)
 
             # *************** Add current question and answer into chat history with reference
             update_chat_history(chat_history, question, message, header_ref)
@@ -453,10 +484,11 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
     }
     return response
 
+
 def main():
     chat_history = []
     topic = ""
-    ask_with_memory("hi", 'ai_doc_001', chat_history, topic)
+    ask_with_memory("what is admtc?", 'doc_1_charte', chat_history, topic)
 
 if __name__ == "__main__":
     main()
