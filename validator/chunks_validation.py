@@ -45,15 +45,9 @@ def validate_context_input(context: any, input_name: str = "context") -> bool:
     
     # *************** Check each item in list is a tuple (Document, float)
     for idx, item in enumerate(context):
-        if not isinstance(item, tuple) or len(item) != 2:
-            raise ValueError(f"Element {idx} of {input_name} must be a tuple with 2 elements. But got: {item}")
-        
-        document, similarity_value = item
+        document= item
         # *************** Check each document is Document based
         if not isinstance(document, Document):
             raise TypeError(f"Element {idx} of {input_name} must have a Document as the first element. But got: {type(document)}")
-        # *************** Check each similarity_value is flaot
-        if not isinstance(similarity_value, float):
-            raise TypeError(f"Element {idx} of {input_name} must have a float as the second element. But got: {type(similarity_value)}")
     
     return True
