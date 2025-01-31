@@ -76,7 +76,7 @@ def plot_title():
         font-size: 3em;
     }
     </style>
-    <div class="gradient-text">AKABOT</div>
+    <div class="gradient-text">AKADBOT</div>
     """
     return gradient_text_html
 
@@ -108,7 +108,7 @@ def plot_title_upload_doc():
                         color: #333333;
                         font-size: 12px;
                         font-weight: bold;
-                        margin: 0;
+                        margin-top: 5px;
                         text-transform: uppercase;
                         letter-spacing: 1.2px;
                     ">Upload Document</h3>
@@ -131,7 +131,7 @@ def plot_title_select_document():
                     color: #333333;
                     font-size: 12px;
                     font-weight: bold;
-                    margin: 0;
+                    margin-top: 5px;
                     text-transform: uppercase;
                     letter-spacing: 1.2px;
                 ">Select Document</h3>
@@ -154,7 +154,7 @@ def plot_title_chat_topic():
                     color: #333333;
                     font-size: 12px;
                     font-weight: bold;
-                    margin: 0;
+                    margin-top: 5px;
                     text-transform: uppercase;
                     letter-spacing: 1.2px;
                 ">Chat Topic</h3>

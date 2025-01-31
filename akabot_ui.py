@@ -14,8 +14,8 @@ from astrapy                                    import DataAPIClient
 from datetime                                   import datetime
 
 # ************ IMPORTS ENGINE ************
-from upload_doc                                 import callRequest
 from engine.chat_akadbot                        import ask_with_memory
+from engine.process_doc_akadbot                 import upload_akadbot_document
 
 # ************ IMPORTS SETUP ************
 from setup                                      import (
@@ -291,7 +291,7 @@ def upload_doc_button(data: dict):
 
         # ************ procces document upload
         processPDFThread = threading.Thread(
-                target=callRequest,
+                target=upload_akadbot_document,
                 args=(data.get("doc_url"), 
                     data.get("course_id"), 
                     data.get("doc_name"), 
