@@ -23,7 +23,7 @@ from setup import LOGGER, GREETINGS_EN, GREETINGS_FR
 from models.llms                            import LLMModels
 
 # *************** IMPORTS HELPERS ***************
-from helpers.language_helper                import get_language_used
+from helpers.language_helpers                import get_language_used
 from helpers.chat_akadbot_helpers           import (
                                                 update_chat_history,
                                                 get_context_based_history,
