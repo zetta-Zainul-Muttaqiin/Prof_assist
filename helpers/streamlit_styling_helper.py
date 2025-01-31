@@ -76,7 +76,7 @@ def plot_title():
         font-size: 3em;
     }
     </style>
-    <div class="gradient-text">AKABOT</div>
+    <div class="gradient-text">AKADBOT</div>
     """
     return gradient_text_html
 
