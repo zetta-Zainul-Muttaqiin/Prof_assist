@@ -19,6 +19,9 @@ def validate_document_input(input_doc: any, input_name: str = "Input document") 
     # *************** Check if input is an instance of Document
     if not isinstance(input_doc, Document):
         raise TypeError(f"{input_name} must be a Document instance, but got {type(input_doc)}: {input_doc}")
+
+    if not input_doc.page_content or not input_doc.page_content.strip():
+        raise ValueError("Invalid input: Document content cannot be empty.")
     
     return True
 
