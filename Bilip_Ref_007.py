@@ -49,7 +49,7 @@ class ExpectedAnswer(BaseModel):
     Expected answer defines the expected structure for response need to be in JSON with key message and is_answered
     """
     
-    response:str = Field(description=("Your detailed answer here explaining the response to the user's question")),
+    response:str = Field(description=("Your detailed answer here explaining the response to the user's question.")),
     is_answered:str = Field(description=("'True' if you provided an answer in the 'response' field, 'False' if you cannot provide an answer"))
     
     
@@ -247,7 +247,7 @@ def generate_akadbot_chain(query: str ,course_id: str) -> Runnable:
     Your response **MUST** follow this exact JSON FORMAT OUTPUT **in all cases**:
     {{
     "response": "Your detailed answer here explaining the response to the user's question.",
-    "is_answered": "If the "response" HAVE AN EXPLANATION ANSWER return to 'True' and return 'False' if the "response" cannot answer."
+    "is_answered": "If the "response" HAVE AN EXPLANATION ANSWER return to 'True' and return 'False' if the "response" CANNOT ANSWER."
     }}
     """
 
