@@ -231,6 +231,7 @@ def generate_akadbot_chain(query: str ,course_id: str) -> Runnable:
     - If the context is provided, analyze the "messages" and 
       generate the answer based on the given context. Do not use external knowledge or assumptions.
     - If "messages" want to know explanation more, make sure to see the "context" clearly.
+    - Return in proper natural language processing.
     
     The context is: '''{context}'''
     
@@ -437,7 +438,7 @@ def ask_with_memory(question: str, course_id: str, chat_history: list = [], topi
                 "language": lang_used,
             })
             
-            print(f"\n\n history_input: {history_input}")
+            #print(f"\n\n history_input: {history_input}")
             print(f"\n\n output: {output}")
             
             # **************** Format json when output is not in json format  
