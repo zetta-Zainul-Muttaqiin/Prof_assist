@@ -109,26 +109,26 @@ def validate_list_input(input_list: any, input_name: str = "Input list", is_empt
     return True
 
 # *************** Validator Function for check dict in correct format and keys
-def validate_filter_entry(filter_entry: any, required_keys: dict):
+def validate_dict_keys(input_dict: any, required_keys: dict):
     """
-    Validates a single filter entry dictionary.
+    Validates a single field keys in dictionary.
 
     Args:
-        filter_entry (dict): The filter entry to validate.
+        input_dict (dict): The dictionary entry to validate.
 
     Returns:
         bool: True if valid, Raise an error if the input is not proper dict and keys
     """
     
-    if not isinstance(filter_entry, dict):
-        raise TypeError(f"Filter entry must be a dictionary. but got {type(filter_entry)} : {filter_entry}")
+    if not isinstance(input_dict, dict):
+        raise TypeError(f"Filter entry must be a dictionary. but got {type(input_dict)} : {input_dict}")
 
     for key, expected_type in required_keys.items():
-        if key not in filter_entry:
-            raise KeyError(f"Missing required key '{key}' in filter entry.")
+        if key not in input_dict:
+            raise KeyError(f"Missing required key '{key}' in dict entry.")
         
-        if not isinstance(filter_entry[key], expected_type):
-            raise KeyError(f"Invalid type for key '{key}'. Expected {expected_type}, got {type(filter_entry[key])}.")
+        if not isinstance(input_dict[key], expected_type):
+            raise KeyError(f"Invalid type for key '{key}'. Expected {expected_type}, got {type(input_dict[key])}.")
 
     return True
 
@@ -145,28 +145,35 @@ def validate_message_response(message: Any) -> str:
     """
     try:
         if isinstance(message, list):
+            # *************** Handle list of dictionaries
+            if all(isinstance(item, dict) for item in message):
+                result = []
+                for item in message:
+                    item_values = [f"{k}: {v}" for k, v in item.items()]
+                    result.append(", ".join(item_values))
+                return " , ".join(result) 
             return ' '.join(str(item) for item in message)
-        # *************** unique case message is nested dict with list
+
         elif isinstance(message, dict):
             # *************** Handle nested dictionaries and lists
             result = []
             for key, value in message.items():
                 if isinstance(value, list):
                     # *************** Handle list of dictionaries
-                    for item in value:
-                        if isinstance(item, dict):
-                            # *************** Extract values from each dictionary
-                            item_values = [str(v) for v in item.values()]
-                            result.extend(item_values)
-                        else:
-                            result.append(str(item))
+                    if all(isinstance(item, dict) for item in value):
+                        for item in value:
+                            item_values = [f"{k}: {v}" for k, v in item.items()]
+                            result.append(", ".join(item_values))
+                    else:
+                        result.append(", ".join(str(item) for item in value))
                 else:
-                    result.append(str(value))
-            return ' '.join(result)
-        
+                    result.append(f"{key}: {value}")
+            return " , ".join(result)  
+
         if not isinstance(message, str): 
             return str(message)
         return message
+
     except Exception as e:
         LOGGER.error(f"Failed to convert message to string: {str(e)}")
         raise
