@@ -24,4 +24,3 @@ def get_language_used(text: str) -> str:
     except Exception as error_lang:
         print("An error occurred when detect langugae with Lingua:", error_lang)
         return text
-
