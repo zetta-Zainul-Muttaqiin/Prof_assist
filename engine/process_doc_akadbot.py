@@ -110,6 +110,18 @@ def parse_pdf_headers(pdf: fitz.Document) -> str:
             # *************** Except headers will reader as text or page string
             else:
                 extracted_text.append(line.text.strip())
+                
+        # *************** Extract tables from the page 
+        tables = page.find_tables()
+        
+        # *************** if table found loop and convert to dataframe
+        if tables.tables: 
+            for table in tables:
+                df = table.to_pandas()
+                
+                # *************** if df not empty append it to extracted_text and convert df to string 
+                if not df.empty:
+                    extracted_text.append("\n Data: " + df.to_string(index=False) + "\n")
     
     # *************** Join extracted text with spaces and return
     return " ".join(extracted_text).strip()
