@@ -145,28 +145,35 @@ def validate_message_response(message: Any) -> str:
     """
     try:
         if isinstance(message, list):
+            # *************** Handle list of dictionaries
+            if all(isinstance(item, dict) for item in message):
+                result = []
+                for item in message:
+                    item_values = [f"{k}: {v}" for k, v in item.items()]
+                    result.append(", ".join(item_values))
+                return " , ".join(result) 
             return ' '.join(str(item) for item in message)
-        # *************** unique case message is nested dict with list
+
         elif isinstance(message, dict):
             # *************** Handle nested dictionaries and lists
             result = []
             for key, value in message.items():
                 if isinstance(value, list):
                     # *************** Handle list of dictionaries
-                    for item in value:
-                        if isinstance(item, dict):
-                            # *************** Extract values from each dictionary
-                            item_values = [str(v) for v in item.values()]
-                            result.extend(item_values)
-                        else:
-                            result.append(str(item))
+                    if all(isinstance(item, dict) for item in value):
+                        for item in value:
+                            item_values = [f"{k}: {v}" for k, v in item.items()]
+                            result.append(", ".join(item_values))
+                    else:
+                        result.append(", ".join(str(item) for item in value))
                 else:
-                    result.append(str(value))
-            return ' '.join(result)
-        
+                    result.append(f"{key}: {value}")
+            return " , ".join(result)  
+
         if not isinstance(message, str): 
             return str(message)
         return message
+
     except Exception as e:
         LOGGER.error(f"Failed to convert message to string: {str(e)}")
         raise
