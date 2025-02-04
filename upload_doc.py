@@ -3,7 +3,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from astrapy.db import AstraDB
 import datetime
 from langchain_community.callbacks          import get_openai_callback
-
+import pandas as pd 
 from langchain.docstore.document import Document
 from werkzeug.local import Local
 import openai
@@ -88,35 +88,43 @@ def load_doc(pdf_path):
     return pdf
 
 #*************** function to get tag header HTML for each page
-def parsing_pdf_html(pdf):
-    print("Parsing pdf...")
-    join_page = ''
-    #*************** parsing each page in pdf to HTML tag
-    for page in pdf:
-        page_html = page.get_textpage().extractXHTML() 
+def parsing_pdf_html2(pdf_doc: fitz.Document) -> str:
+    """
+    Parse a PDF document extracting HTML headers and tables.
+    The resulting string contains the combined HTML text (including headers) 
+    and string representations of any tables found.
+
+    Args:
+        pdf_doc: A fitz Document object
+        
+    Returns:
+        str: Combined HTML text and table strings.
+    """
+    join_page = ""
+    
+    for page in pdf_doc:
+        # Extract HTML content
+        page_html = page.get_textpage().extractXHTML()
         search_html = BeautifulSoup(page_html, "html.parser")
-
-        #*************** find all header tag <h> inside div tag
-        for line in search_html.div:
-            if line.name == "h1" and not line.find("i"):
-                join_page += f"{line}" + " "
-
-            elif line.name == "h2" and not line.find("i"):
-                join_page += f"{line}" + " "
-
-            elif line.name == "h3" and not line.find("i"):
-                join_page += f"{line}" + " "
-
-            elif line.name == "h4" and not line.find("i"):
-                join_page += f"{line}" + " "
-            
+        
+        # Parse headers and text from the HTML content
+        # (Assuming that search_html.div exists and contains the relevant elements)
+        for element in search_html.div:
+            if element.name in ["h1", "h2", "h3", "h4"] and not element.find("i"):
+                join_page += f"{element} "
             else:
-                join_page += f"{line.text}" + " "
-        #*************** end parsing each page in pdf to HTML tag
-                
-    join_page = join_page.strip()
-    print("Parsing is done!...")
-    return join_page
+                join_page += f"{element.text} "
+        
+        # Extract tables from the page and append their string representations into join_page
+        tables = page.find_tables()
+        if tables.tables: 
+            for table in tables:
+                df = table.to_pandas()
+                if not df.empty:
+                    join_page += "\n Data: " + df.to_string(index=False) + "\n"
+    
+    return join_page.strip()
+
 #*************** end of get tag header HTML for each page
 
 #*************** function to add \n\n breakspace
@@ -253,6 +261,34 @@ def callErrorWebhook(url_error, course, course_document_id, doc_tokens, error):
     #*************** end of save webhook call record to AstraDB 
 #*************** end of function to call webhook to BE once document processing hits rate limit error 
 
+
+def match_df_and_chunk(dataframes, chunks):
+    enhanced_chunks = []
+    
+    for df in dataframes:  
+        cols_df = set(df.columns)  
+        
+        for chunk in chunks: 
+            if any(col in chunk.page_content for col in cols_df):  
+                # Format DataFrame into a string
+                data_str = "\nData:\n"
+                data_str += df.to_string(index=False)
+                
+                # Append the DataFrame data to the chunk content
+                new_content = chunk.page_content + data_str
+                
+                # Create a new Document with updated content
+                enhanced_chunks.append(Document(
+                    page_content=new_content,
+                    metadata=chunk.metadata
+                ))
+            else:
+                # If no match, keep the chunk unchanged
+                enhanced_chunks.append(chunk)
+    
+    return enhanced_chunks
+
+
 #*************** main function to be called for processing document
 def callRequest(URL: str, course_id: str, course_name:str,  doc_name: str, doc_id: str):
 
@@ -261,9 +297,10 @@ def callRequest(URL: str, course_id: str, course_name:str,  doc_name: str, doc_i
     if(pdf_page):
         LOGGER.info('Document downloaded... Course ID: ', course_id, ' || Document ID: ', doc_id)
 
-    pdf_page_parsed = parsing_pdf_html(pdf_page)
+    pdf_page_parsed = parsing_pdf_html2(pdf_page)
     removed_break = remove_break_add_whitespace(pdf_page_parsed)
     doc = create_document_by_splitting(removed_break)
+    # new_doc =  match_df_and_chunk(df, doc)
     chunks = extract_headers(doc)
     doc_tokens = 0
     print("insert metedata information")
