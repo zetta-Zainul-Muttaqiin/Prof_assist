@@ -5,7 +5,7 @@ from langchain_core.messages            import HumanMessage, BaseMessage
 from langchain_core.documents           import Document
 
 # *************** IMPORTS HELPERS ***************
-from helpers.astradb_connect_helper     import get_vector_collection
+from helpers.astradb_connect_helpers     import get_vector_collection
 
 # *************** IMPORTS VALIDATORS ***************
 from validator.data_type_validatation   import (

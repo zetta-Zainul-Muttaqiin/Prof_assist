@@ -1,17 +1,21 @@
-# ************ import
-from flask import Flask, jsonify, request
+# *************** IMPORT LIBRARY ***************
 import os
-import time
-from dotenv import load_dotenv
 import threading
-import time
-from upload_doc import callRequest #delete
-from engine.chat_akadbot import ask_with_memory
-from setup import LOGGER
-from helpers.error_handle_helper import handle_error
+from flask                          import Flask, jsonify, request
+
+from setup                          import LOGGER
+
+
+from engine.chat_akadbot            import ask_with_memory
+from engine.process_doc_akadbot     import (
+                                        upload_akadbot_document, 
+                                        delete_documents_id,
+                                        delete_list_document,
+                                    )
 # from quiz_builder import quiz_builder, quiz_editor
 
-load_dotenv()
+from helpers.error_handle_helpers    import handle_error
+
 app = Flask(__name__)
 chat_history = []
 user_chat_histories = {}
@@ -34,11 +38,35 @@ def index():
     return f"Hello! Your history is: {get_history}"
 
 
+# *************** Endpoint route for upload a document to akadbot
 @app.route("/process_pdf", methods=["POST"])
 def process_pdf():
-    try:
+    """
+    Handles the processing of a PDF document by extracting necessary metadata
+    from the request body and initiating a separate thread to process the document.
 
-        # ************ req.body
+    Request (JSON):
+        {
+            "pdf_url": URL of the PDF document
+            "document_name": Name of the document
+            "document_id": Unique ID for the document
+            "course_name": Name of the course that document uploaded
+            "course_id": Unique ID for the course
+        }
+
+    Returns:
+        Response (JSON):
+            - Success:
+                {"message": "PDF processing initiated successfully"}, HTTP 200
+            - Bad Request (400):{
+                "error": True, 
+                "message": "Bad Request: missing required input data: {'pdf_url', 'course_id', 'document_name', 'document_id'}"
+                }, HTTP 400
+            - Specific Errors: {"error": True, "message": error_message}, HTTP 501
+            - Unexpected Errors: {"error": True, "message": error_message}, HTTP 500
+    """
+    try:
+        # *************** Parse request body
         data = request.get_json()
         pdf_url = data.get("pdf_url")
         document_name = data.get("document_name")
@@ -46,43 +74,128 @@ def process_pdf():
         course_name = data.get("course_name")
         course_id = data.get("course_id")
 
-        check_payload = (pdf_url and course_name and course_id and document_name and document_id)
+        # *************** Validate required input fields
+        check_payload = all([pdf_url, course_name, course_id, document_name, document_id])
         if check_payload:
-            # ************ Call the function to process the PDF
-            processPDFThread = threading.Thread(target=callRequest, args=(
+            # *************** Start a new thread for processing the PDF
+            processPDFThread = threading.Thread(target=upload_akadbot_document, args=(
                 pdf_url, course_id, document_name, course_name, document_id))
             processPDFThread.start()
-        
+            
             return jsonify({"message": "PDF processing initiated successfully"}), 200
-
-        return jsonify({"message": "One of request payload is empty."}), 400
+        
+        # *************** Handle missing required fields
+        return jsonify({"error": True, "message": "Bad Request: missing required input data: {pdf_url, course_id, course_name, document_name, document_id}"}), 400
+    
+    # *************** Handle specific known errors
     except (KeyError, IndexError, TypeError, ValueError) as error:
         error_message = str(error)
-        LOGGER.error(f"error occured (Upload Doc): {error_message}")
-        handle_error(error, 'finance_assist_chat')
-        return jsonify({'error': True, 'message': error_message}), 500
+        LOGGER.error(f"Error occurred (Akadbot): {error_message}")
+        handle_error(error, 'chat_akadbot')
+        return jsonify({"error": True, "message": error_message}), 501
     
+    # *************** Handle unexpected errors
     except Exception as un_error:
         error_message = str(un_error)
-        LOGGER.error(f"An unexpected error occurred (Upload Doc): {error_message}")
-        handle_error(un_error, 'finance_assist_chat')
-        return jsonify({'error': True, 'message': error_message}), 404
+        LOGGER.error(f"An unexpected error occurred (Akadbot): {error_message}")
+        handle_error(un_error, 'chat_akadbot')
+        return jsonify({"error": True, "message": error_message}), 500
 
+# *************** Endpoint route for delete only one pdf expected
+@app.route("/delete_one_pdf", methods=["POST"])
+def delete_pdf():
+    """
+    Handles the deletion of a single PDF document by receiving the document ID
+    from the request body and removing it from the system.
 
+    Request (JSON):
+        {
+            "document_id": Unique ID for the document want to delete
+        }
 
-# @app.route("/delete_pdf", methods=["POST"])
-# def delete_pdf():
-#     try:
-#         data = request.get_json()
-#         course_id = data.get("document_id")
+    Returns:
+        Response (JSON):
+            - Success: {"message": "Document ID '{document_id}' deleted successfully!"}, HTTP 200
+            - Warning: {"message": "Document with ID '{document_id}' not found."}, HTTP 200
+            - Bad Request: {"error": True, "message": "Bad Request: missing required input data: {'document_id'}"}, HTTP 400
+            - Specific Errors: {"error": True, "message": error_message}, HTTP 501
+            - Unexpected Errors: {"error": True, "message": error_message}, HTTP 500
+    """
+    try:
+        # ************ Parse request body
+        data = request.get_json()
+        document_id = data.get("document_id")
+        
+        # ************ Validate required input field
+        if document_id:
+            status = delete_documents_id(document_id)
 
-#         # deletePDFThread = threading.Thread(target=delete, args=(course_id))
-#         # deletePDFThread.start()
-#         delete(course_id)
+            # ************ Return delete status with code response
+            return jsonify({"message": status}), 200
+        
+        return jsonify({"error": True, "message": "Bad Request: missing required input data: {'document_id'}"}), 400
+    
+    # *************** Handle specific known errors
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        error_message = str(error)
+        LOGGER.error(f"Error occurred (Delete Document): {error_message}")
+        handle_error(error, 'delete_one_document')
+        return jsonify({"error": True, "message": error_message}), 501
+    
+    # *************** Handle unexpected errors
+    except Exception as un_error:
+        error_message = str(un_error)
+        LOGGER.error(f"An unexpected error occurred (Delete Document): {error_message}")
+        handle_error(un_error, 'delete_one_document')
+        return jsonify({"error": True, "message": error_message}), 500
 
-#         return jsonify({"message": "Document deleted"})
-#     except Exception as error:
-#         return jsonify({"error": str(error)}), 500
+# *************** Endpoint route for delete many pdf in list of document_id 
+@app.route("/delete_many_pdf", methods=["POST"])
+def delete_many_pdf():
+    """
+    Handles the deletion of multiple PDF documents by receiving a list of document IDs
+    from the request body and removing them from the system.
+
+    Request (JSON):
+        {
+            "list_document_id": list of Unique ID for the documents want to deleted
+        }
+
+    Returns:
+        Response (JSON):
+            - Success: {"message": "Documents with IDs '{list_document}' deleted successfully!"}, HTTP 200
+            - Warning: {"message": "Documents with IDs '{list_document}' not found."}, HTTP 200
+            - Bad Request: {"error": True, "message": "Bad Request: missing required input data: {'list_document_id'}"}, HTTP 400
+            - Specific Errors: {"error": True, "message": error_message}, HTTP 501
+            - Unexpected Errors: {"error": True, "message": error_message}, HTTP 500
+    """
+    try:
+        # ************ Parse request body
+        data = request.get_json()
+        list_documents = data.get("list_document_id")
+        
+        # ************ Validate required input field
+        if list_documents:
+            status = delete_list_document(list_documents)
+
+            # ************ Return delete status with code response
+            return jsonify({"message": status}), 200
+        
+        return jsonify({"error": True, "message": "Bad Request: missing required input data: {'list_document_id'}"}), 400
+    
+    # *************** Handle specific known errors
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        error_message = str(error)
+        LOGGER.error(f"Error occurred (Delete Document): {error_message}")
+        handle_error(error, 'delete_many_document')
+        return jsonify({"error": True, "message": error_message}), 501
+    
+    # *************** Handle unexpected errors
+    except Exception as un_error:
+        error_message = str(un_error)
+        LOGGER.error(f"An unexpected error occurred (Delete Document): {error_message}")
+        handle_error(un_error, 'delete_many_document')
+        return jsonify({"error": True, "message": error_message}), 500
 
 # *************** Endpoint route for question answering to akadbot document
 @app.route("/student_question", methods=["POST"])
@@ -104,24 +217,17 @@ def ask_question():
 
     Returns:
         Response (JSON):
-        - Success (200):
+        - Success:
             {
-                "message": AI-generated response
-                "topic": Generated topic
-                "chat_history": Updated conversation history
-                "tokens_in": Number of input tokens used
+                "message": AI-generated response of question,
+                "topic": Generated topic response of first question,
+                "chat_history": Updated conversation history,
+                "tokens_in": Number of input tokens used,
                 "tokens_out": Number of output tokens generated
-            }
-        - Bad Request (400):
-            {
-                "error": True,
-                "message": "Bad Request: missing required input data: {question, course_id}"
-            }
-        - Internal Error (501/500):
-            {
-                "error": True,
-                "message": str  # Error description
-            }
+            }, HTTP 200
+        - Bad Request: {"error": True, "message": "Bad Request: missing required input data: {question, course_id}"}, HTTP 400
+        - Specific Errors: {"error": True, "message": error_message}, HTTP 501
+        - Unexpected Errors: {"error": True, "message": error_message}, HTTP 500
     """
     try:
         # *************** Get request data from BE in JSON format
@@ -219,4 +325,4 @@ def ask_question():
 #         return jsonify({"error": str(error)}), 500
     
 if __name__ == "__main__":
-    app.run(host='192.168.1.12', port=9874)
+    app.run(host='192.168.1.6', port=9874)

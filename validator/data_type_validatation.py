@@ -109,26 +109,26 @@ def validate_list_input(input_list: any, input_name: str = "Input list", is_empt
     return True
 
 # *************** Validator Function for check dict in correct format and keys
-def validate_filter_entry(filter_entry: any, required_keys: dict):
+def validate_dict_keys(input_dict: any, required_keys: dict):
     """
-    Validates a single filter entry dictionary.
+    Validates a single field keys in dictionary.
 
     Args:
-        filter_entry (dict): The filter entry to validate.
+        input_dict (dict): The dictionary entry to validate.
 
     Returns:
         bool: True if valid, Raise an error if the input is not proper dict and keys
     """
     
-    if not isinstance(filter_entry, dict):
-        raise TypeError(f"Filter entry must be a dictionary. but got {type(filter_entry)} : {filter_entry}")
+    if not isinstance(input_dict, dict):
+        raise TypeError(f"Filter entry must be a dictionary. but got {type(input_dict)} : {input_dict}")
 
     for key, expected_type in required_keys.items():
-        if key not in filter_entry:
-            raise KeyError(f"Missing required key '{key}' in filter entry.")
+        if key not in input_dict:
+            raise KeyError(f"Missing required key '{key}' in dict entry.")
         
-        if not isinstance(filter_entry[key], expected_type):
-            raise KeyError(f"Invalid type for key '{key}'. Expected {expected_type}, got {type(filter_entry[key])}.")
+        if not isinstance(input_dict[key], expected_type):
+            raise KeyError(f"Invalid type for key '{key}'. Expected {expected_type}, got {type(input_dict[key])}.")
 
     return True
 
